@@ -2,6 +2,8 @@
 
 基于 LangGraph + LangChain + DeepSeek 的智能股票分析系统，支持 A 股与港股市场的研究分析。
 
+![量化示例](docs/images/factor_backtest_result.png)  
+
 ---
 
 ## 总体介绍
