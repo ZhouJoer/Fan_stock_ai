@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 数据文件（在Docker中通过volume挂载）
+data/
+db/
+pools/
+
+# 日志
+*.log
+
+# 环境变量（通过docker-compose传递）
+.env
+.env.local
+
+# Git
+.git/
+.gitignore
+
+# 文档
+*.md
+!README.md
+
+# 测试文件
+test_*.py
+demo_*.py
+
+# Node modules（前端构建时会重新安装）
+web/node_modules/
+web/dist/
+web/.vite/
+
+# 其他
+.DS_Store
+Thumbs.db
+*.db-journal
+
+# Docker相关
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# 部署脚本
+setup_venv.*
+deploy.*

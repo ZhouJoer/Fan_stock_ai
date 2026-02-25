@@ -1,0 +1,46 @@
+# 后端Python服务Dockerfile
+# 使用通用 Python 3 镜像；推荐使用 Python 3.10（如需固定可改为 FROM python:3.10-slim）
+FROM python:3-slim
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置环境变量
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# 安装系统依赖：编译工具 + 中文字体（matplotlib 图表中文显示）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    fontconfig \
+    fonts-wqy-microhei \
+    && fc-cache -fv \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制依赖文件
+COPY requirements.txt .
+
+# 先安装 CPU 版 PyTorch，避免安装 2GB+ 的 CUDA 及 nvidia-* 包（Docker 部署通常无 GPU）
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# 安装其余 Python 依赖（sentence-transformers 会复用已安装的 torch，不再拉取 CUDA 版）
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 复制应用代码
+COPY . .
+
+# 创建必要的目录
+RUN mkdir -p data db pools data/etf_sim_accounts
+
+# 暴露端口
+EXPOSE 8000
+
+# 健康检查（使用curl，更轻量）
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+
+# 启动命令
+CMD ["python", "-m", "uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]

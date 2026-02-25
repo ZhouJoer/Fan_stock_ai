@@ -1,0 +1,9 @@
+# 绿联 NAS (arm64/rk3588) 部署配置
+# 用法: docker compose -f docker-compose.yml -f docker-compose.nas.yml up -d -b
+
+services:
+  backend:
+    platform: linux/arm64
+
+  frontend:
+    platform: linux/arm64

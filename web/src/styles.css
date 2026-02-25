@@ -1,0 +1,1557 @@
+:root {
+    color-scheme: light;
+    --bg: #0b1020;
+    --dim: rgba(0, 0, 0, 0.25);
+    --panel: rgba(255, 255, 255, 0.08);
+    --panelBorder: rgba(255, 255, 255, 0.14);
+    --border: rgba(255, 255, 255, 0.14);
+    --text: rgba(255, 255, 255, 0.92);
+    --muted: rgba(255, 255, 255, 0.65);
+    --button: rgba(255, 255, 255, 0.14);
+    --buttonHover: rgba(255, 255, 255, 0.20);
+    --primary: rgba(86, 185, 255, 0.95);
+    --primaryHover: rgba(86, 185, 255, 1);
+    --accent: rgba(86, 185, 255, 0.95);
+
+    /* 设计系统：排版 */
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --text-xs: 11px;
+    --text-sm: 12px;
+    --text-base: 14px;
+    --text-lg: 15px;
+    --leading-tight: 1.25;
+    --leading-normal: 1.5;
+    --leading-relaxed: 1.6;
+
+    /* 设计系统：间距（4/8 步进） */
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+
+    /* 设计系统：圆角与阴影 */
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 12px;
+    --shadow-panel: 0 4px 20px rgba(0, 0, 0, 0.2);
+    --shadow-hover: 0 8px 24px rgba(86, 185, 255, 0.15);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    background: radial-gradient(1200px 800px at 20% 10%, rgba(86, 185, 255, 0.18), transparent 55%),
+        radial-gradient(900px 700px at 80% 0%, rgba(255, 255, 255, 0.10), transparent 60%),
+        var(--bg);
+    color: var(--text);
+}
+
+.app {
+    min-height: 100vh;
+    padding: 18px;
+}
+
+.topbar {
+    position: relative;
+    padding: 14px 14px 18px;
+}
+
+.title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+}
+
+.subtitle {
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+/* ==================== Tab 导航样式 ==================== */
+.tabNav {
+    display: flex;
+    gap: 8px;
+    padding: 0 14px 14px;
+    flex-wrap: wrap;
+}
+
+.tabBtn,
+.tabBtnActive {
+    appearance: none;
+    border: 1px solid var(--panelBorder);
+    background: var(--button);
+    color: var(--text);
+    padding: var(--space-3) 24px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+    flex: 1;
+    min-width: 140px;
+    text-align: center;
+}
+
+.tabBtn:hover {
+    background: var(--buttonHover);
+    border-color: rgba(86, 185, 255, 0.35);
+}
+
+.tabBtnActive {
+    border-color: rgba(86, 185, 255, 0.7);
+    background: rgba(86, 185, 255, 0.2);
+    color: var(--primary);
+    box-shadow: var(--shadow-hover);
+}
+
+.tabContent {
+    padding: 0 14px;
+}
+
+.tabContent .panel {
+    max-width: 100%;
+    margin: 0 auto;
+}
+
+@media (min-width: 768px) {
+    .tabContent .panel {
+        max-width: 900px;
+    }
+}
+
+@media (min-width: 1200px) {
+    .tabContent .panel {
+        max-width: 1100px;
+    }
+}
+
+/* 旧的 grid 布局（保留但不再主要使用）*/
+.grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 14px;
+}
+
+@media (min-width: 980px) {
+    .grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+@media (min-width: 1400px) {
+    .grid {
+        grid-template-columns: repeat(4, 1fr);
+    }
+}
+
+.panel {
+    background: var(--panel);
+    border: 1px solid var(--panelBorder);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-panel);
+}
+
+.panelHeader {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 14px;
+    border-bottom: 1px solid var(--panelBorder);
+}
+
+.panelTitle {
+    font-weight: 700;
+}
+
+.panelMeta {
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.panelInput {
+    padding: 14px;
+    display: grid;
+    gap: 10px;
+}
+
+.textarea {
+    width: 100%;
+    resize: vertical;
+    border-radius: 10px;
+    border: 1px solid var(--panelBorder);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--text);
+    padding: 10px 12px;
+    line-height: 1.4;
+}
+
+.actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.button,
+.buttonPrimary {
+    appearance: none;
+    border: 1px solid var(--panelBorder);
+    background: var(--button);
+    color: var(--text);
+    padding: 9px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+}
+
+.button:hover {
+    background: var(--buttonHover);
+}
+
+.buttonPrimary {
+    border-color: rgba(86, 185, 255, 0.55);
+    background: rgba(86, 185, 255, 0.18);
+}
+
+.buttonPrimary:hover {
+    background: rgba(86, 185, 255, 0.26);
+}
+
+.buttonPrimary:disabled,
+.button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.panelList {
+    padding: 14px;
+    display: grid;
+    gap: 10px;
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+/* 分页模式下的面板列表高度更大 */
+.tabContent .panelList {
+    max-height: calc(100vh - 300px);
+    min-height: 300px;
+}
+
+.card {
+    border: 1px solid var(--panelBorder);
+    background: rgba(0, 0, 0, 0.18);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-3);
+}
+
+.cardMeta {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 8px;
+}
+
+.cardText {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.empty {
+    font-size: var(--text-sm);
+    color: var(--muted);
+    padding: var(--space-5) var(--space-2);
+    text-align: center;
+}
+
+.errorText {
+    font-size: 12px;
+    color: rgba(255, 140, 140, 0.95);
+    padding: 6px 2px 0;
+}
+
+.progressText {
+    font-size: 12px;
+    color: var(--muted);
+    padding: 6px 2px 0;
+}
+
+/* ==================== 交易记录表格 / Badge ==================== */
+.trades-table-wrap {
+    margin-top: var(--space-5);
+}
+
+.trades-table-wrap .empty {
+    color: #6B7280;
+}
+
+.trades-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.trades-title {
+    font-weight: 700;
+    font-size: 15px;
+    color: #1F2937;
+}
+
+.trades-pagination {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 13px;
+}
+
+.trades-page-info {
+    color: #374151;
+    font-weight: 600;
+}
+
+.trades-loading {
+    padding: var(--space-5);
+    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    color: #374151;
+}
+
+/* 统一加载 spinner（可与 .empty 组合使用） */
+.loadingSpinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--panelBorder);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.trades-scroll {
+    max-height: 400px;
+    overflow-y: auto;
+    font-size: 12px;
+}
+
+.trades-table {
+    width: 100%;
+    font-size: 13px;
+    border-collapse: collapse;
+    border: 1px solid #D1D5DB;
+    background: #fff;
+}
+
+.trades-thead-row {
+    background: #1E40AF;
+    color: white;
+    font-weight: 700;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.trades-th {
+    padding: 10px;
+    border-bottom: 2px solid #1E3A8A;
+}
+
+.trades-th-left { text-align: left; }
+.trades-th-center { text-align: center; }
+.trades-th-right { text-align: right; }
+
+.trades-tbody-row {
+    background: #FFFFFF;
+}
+
+.trades-tbody-row:nth-child(even) {
+    background: #F9FAFB;
+}
+
+.trades-tbody-row:not(:last-child) {
+    border-bottom: 1px solid #E5E7EB;
+}
+
+.trades-tbody-row:hover {
+    background: #F3F4F6 !important;
+}
+
+.trades-td {
+    padding: 10px;
+    color: #374151;
+}
+
+.trades-td-muted {
+    color: #6B7280;
+    font-size: 12px;
+}
+
+.trades-td-center { text-align: center; }
+.trades-td-right { text-align: right; }
+.trades-td-code {
+    font-weight: 700;
+    color: #1F2937;
+}
+
+.trades-td-num {
+    font-weight: 600;
+    color: #374151;
+}
+
+.trades-td-reason {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.badge--buy {
+    background: rgba(5, 150, 105, 0.35);
+    color: #4ade80;
+}
+
+.badge--sell {
+    background: rgba(220, 38, 38, 0.35);
+    color: #f87171;
+}
+
+.amount--positive {
+    color: #4ade80;
+}
+
+.amount--negative {
+    color: #f87171;
+}
+
+/* ==================== 量化分析面板专用样式 ==================== */
+.modeSwitch {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+
+.modeBtn,
+.modeBtnActive {
+    flex: 1;
+    min-width: 80px;
+    appearance: none;
+    border: 1px solid var(--panelBorder);
+    background: var(--button);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.modeBtn:hover {
+    background: var(--buttonHover);
+}
+
+.modeBtnActive {
+    border-color: rgba(86, 185, 255, 0.65);
+    background: rgba(86, 185, 255, 0.22);
+    color: var(--primary);
+}
+
+.formGroup {
+    display: grid;
+    gap: 6px;
+}
+
+.label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+}
+
+.input,
+.select {
+    width: 100%;
+    border-radius: 10px;
+    border: 1px solid var(--panelBorder);
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--text);
+    padding: 10px 12px;
+    font-size: 14px;
+}
+
+.select {
+    cursor: pointer;
+}
+
+.input:focus,
+.select:focus,
+.textarea:focus {
+    outline: none;
+    border-color: rgba(86, 185, 255, 0.55);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+    color: var(--muted);
+    opacity: 0.6;
+}
+
+/* 回测图表样式：保证图表显示足够大 */
+.chartContainer {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--panelBorder);
+    min-width: 0; /* 允许在 flex 内收缩 */
+    overflow-x: auto;
+}
+
+.chartImage {
+    width: 100%;
+    min-width: 720px; /* 避免图表被压得过小 */
+    height: auto;
+    border-radius: 8px;
+    border: 1px solid var(--panelBorder);
+    background: rgba(255, 255, 255, 0.95);
+    display: block;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.chartImage:hover {
+    transform: scale(1.01);
+    box-shadow: 0 8px 24px rgba(86, 185, 255, 0.25);
+}
+
+/* 进度条样式 */
+.progressContainer {
+    margin: 12px 0;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 8px;
+    border: 1px solid var(--panelBorder);
+}
+
+.progressTitle {
+    font-size: 13px;
+    color: var(--text);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.progressTitle .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--panelBorder);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.progressBar {
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.progressFill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), #56f9d9);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.7;
+    }
+
+    100% {
+        opacity: 1;
+    }
+}
+
+@keyframes progressIndeterminate {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+.progressInfo {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+/* ==================== LLM实时决策面板 ==================== */
+.liveDecisionsPanel {
+    margin-top: 12px;
+    padding: 10px;
+    background: linear-gradient(135deg, rgba(106, 90, 205, 0.15), rgba(147, 112, 219, 0.1));
+    border-radius: 8px;
+    border: 1px solid rgba(147, 112, 219, 0.3);
+}
+
+.llmStatus {
+    font-size: 12px;
+    color: #b19cd9;
+    padding: 6px 10px;
+    background: rgba(106, 90, 205, 0.2);
+    border-radius: 6px;
+    margin-bottom: 8px;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.6;
+    }
+}
+
+.liveDecisionsTitle {
+    font-size: 12px;
+    font-weight: 600;
+    color: #d8bfd8;
+    margin-bottom: 8px;
+}
+
+.liveDecisionsScroll {
+    max-height: 200px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(147, 112, 219, 0.4) transparent;
+}
+
+.liveDecisionsList {
+    font-size: 11px;
+}
+
+.liveDecisionItem {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 8px;
+    margin-bottom: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    border-left: 3px solid rgba(147, 112, 219, 0.5);
+    transition: all 0.2s ease;
+}
+
+.liveDecisionItem:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.liveDecisionItem.tradeBuy {
+    border-left-color: #4ade80;
+    background: rgba(74, 222, 128, 0.1);
+}
+
+.liveDecisionItem.tradeSell {
+    border-left-color: #f87171;
+    background: rgba(248, 113, 113, 0.1);
+}
+
+.ldDate {
+    color: var(--muted);
+    min-width: 75px;
+}
+
+.ldCode {
+    font-weight: 600;
+    color: var(--primary);
+    min-width: 55px;
+}
+
+.ldAction {
+    min-width: 45px;
+}
+
+.ldAction.actionBuy {
+    color: #4ade80;
+}
+
+.ldAction.actionSell {
+    color: #f87171;
+}
+
+.ldShares {
+    color: #facc15;
+    min-width: 50px;
+}
+
+.ldConf {
+    color: #a78bfa;
+    min-width: 70px;
+}
+
+.ldReason {
+    color: var(--muted);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 组合决策样式 */
+.liveDecisionItem.portfolioDecision {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    background: linear-gradient(135deg, rgba(106, 90, 205, 0.15), rgba(147, 112, 219, 0.08));
+    border-left-color: #a78bfa;
+    padding: 10px;
+}
+
+.ldPortfolio {
+    font-weight: 600;
+    color: #d8bfd8;
+    font-size: 12px;
+}
+
+.ldPortfolioDetail {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    font-size: 11px;
+}
+
+.ldAnalysis {
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+
+.ldBuyList {
+    color: #4ade80;
+}
+
+.ldSellList {
+    color: #f87171;
+}
+
+/* ==================== 选股池管理面板专用样式 ==================== */
+.poolPanel {
+    grid-column: span 1;
+}
+
+/* 股票池展示区域 */
+.poolStocksDisplay {
+    background: var(--dim);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 12px;
+}
+
+.poolStocksHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
+.stockTags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-height: 28px;
+}
+
+.emptyHint {
+    color: var(--muted);
+    font-size: 12px;
+    font-style: italic;
+}
+
+.stockTag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--accent);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.tagRemove {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0;
+    margin-left: 2px;
+    font-size: 14px;
+    line-height: 1;
+    opacity: 0.7;
+}
+
+.tagRemove:hover {
+    opacity: 1;
+}
+
+/* 小按钮 */
+.buttonSmall {
+    padding: 4px 8px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    border-radius: 4px;
+    cursor: pointer;
+    color: var(--text);
+    transition: all 0.15s ease;
+}
+
+.buttonSmall:hover {
+    background: var(--dim);
+    border-color: var(--accent);
+}
+
+/* 快捷添加区域 */
+.quickAdd {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+}
+
+.quickAdd .label {
+    font-size: 12px;
+    color: var(--muted);
+    margin: 0;
+}
+
+/* 信息提示框 */
+.infoBox {
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    font-size: 12px;
+    color: var(--text);
+}
+
+/* 信号结果展示 */
+.signalsResult {
+    margin-top: 12px;
+}
+
+.signalCards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.signalCard {
+    background: var(--dim);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 11px;
+}
+
+.signalCard.signal-longopen {
+    border-color: rgba(34, 197, 94, 0.5);
+    background: rgba(34, 197, 94, 0.08);
+}
+
+.signalCard.signal-shortopen {
+    border-color: rgba(239, 68, 68, 0.5);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.signalCard.signal-neutral {
+    border-color: rgba(234, 179, 8, 0.5);
+    background: rgba(234, 179, 8, 0.08);
+}
+
+.signalCardHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.signalCode {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.signalBadge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+}
+
+.badge-longopen {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+}
+
+.badge-shortopen {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.badge-neutral {
+    background: rgba(234, 179, 8, 0.2);
+    color: #eab308;
+}
+
+.signalCardBody {
+    color: var(--muted);
+    line-height: 1.5;
+}
+
+.allocInfo {
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px solid var(--border);
+    color: var(--accent);
+    font-weight: 500;
+}
+
+/* ==================== 模拟仓样式 ==================== */
+.simAccountInfo {
+    background: linear-gradient(135deg, rgba(86, 185, 255, 0.1), rgba(147, 112, 219, 0.05));
+    border: 1px solid rgba(86, 185, 255, 0.2);
+}
+
+.simPositionCard {
+    background: var(--dim);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+    transition: all 0.2s;
+}
+
+.simPositionCard:hover {
+    border-color: var(--primary);
+    background: rgba(86, 185, 255, 0.05);
+}
+
+.simPositionHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.simPositionCode {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text);
+}
+
+.simPositionStats {
+    text-align: right;
+    font-size: 12px;
+}
+
+.simProfitPositive {
+    color: #4ade80;
+    font-weight: 600;
+}
+
+.simProfitNegative {
+    color: #f87171;
+    font-weight: 600;
+}
+
+.simTradeItem {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    transition: background 0.2s;
+}
+
+.simTradeItem:hover {
+    background: var(--dim);
+}
+
+.simTradeBuy {
+    color: #4ade80;
+}
+
+.simTradeSell {
+    color: #f87171;
+}
+
+/* 已保存的选股池列表 */
+.savedPools {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.savedPoolsList {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 6px;
+    max-height: 120px;
+    overflow-y: auto;
+}
+
+.savedPoolItem {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    background: var(--dim);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.savedPoolItem:hover {
+    border-color: var(--accent);
+    background: var(--bg);
+}
+
+.poolItemName {
+    font-weight: 500;
+    color: var(--text);
+}
+
+.poolItemInfo {
+    font-size: 11px;
+    color: var(--muted);
+}
+
+/* ==================== 回测结果详情样式 ==================== */
+.backtestResult {
+    padding: 14px;
+}
+
+.sectionTitle {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 16px 0 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* 交易记录表格 */
+.tradesSection {
+    margin-top: 12px;
+}
+
+.tradesTable {
+    font-size: 11px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.tradesHeader {
+    display: grid;
+    grid-template-columns: 90px 70px 70px 70px 70px 90px 1fr;
+    gap: 4px;
+    padding: 8px 10px;
+    background: rgba(86, 185, 255, 0.1);
+    font-weight: 600;
+    color: var(--text);
+    position: sticky;
+    top: 0;
+}
+
+.tradeRow {
+    display: grid;
+    grid-template-columns: 90px 70px 70px 70px 70px 90px 1fr;
+    gap: 4px;
+    padding: 6px 10px;
+    border-top: 1px solid var(--border);
+    transition: background 0.15s;
+}
+
+.tradeRow:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.tradeBuy {
+    background: rgba(34, 197, 94, 0.05);
+}
+
+.tradeSell {
+    background: rgba(239, 68, 68, 0.05);
+}
+
+.tradeCode {
+    font-weight: 500;
+    color: var(--primary);
+}
+
+.actionBuy {
+    color: #22c55e;
+    font-weight: 500;
+}
+
+.actionSell {
+    color: #ef4444;
+    font-weight: 500;
+}
+
+.tradeReason {
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tradesMore {
+    padding: 8px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+    border-top: 1px solid var(--border);
+}
+
+/* 持仓变动时间线 */
+.positionsSection {
+    margin-top: 12px;
+}
+
+.positionsTimeline {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 350px;
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.positionSnap {
+    background: var(--dim);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+}
+
+.snapHeader {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+}
+
+.snapDate {
+    font-weight: 600;
+    color: var(--text);
+    font-size: 12px;
+}
+
+.snapReturn {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.snapReturn.positive {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+}
+
+.snapReturn.negative {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+}
+
+.snapValue {
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.snapPositions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.emptyPosition {
+    color: var(--muted);
+    font-size: 11px;
+    font-style: italic;
+}
+
+.positionChip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+}
+
+.positionChip.profitUp {
+    background: rgba(34, 197, 94, 0.12);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.positionChip.profitDown {
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.positionChip.newPosition {
+    animation: pulse 0.5s ease-in-out;
+    box-shadow: 0 0 8px rgba(34, 197, 94, 0.4);
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.05);
+    }
+
+    100% {
+        transform: scale(1);
+    }
+}
+
+.positionChip small {
+    opacity: 0.8;
+}
+
+/* 持仓变动提示 */
+.snapChanges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    background: rgba(0, 0, 0, 0.03);
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.changeNew {
+    color: #22c55e;
+    font-weight: 500;
+}
+
+.changeExit {
+    color: #ef4444;
+    font-weight: 500;
+}
+
+/* 日收益显示 */
+.snapDailyReturn {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 8px;
+}
+
+.snapDailyReturn.positive {
+    background: rgba(34, 197, 94, 0.1);
+    color: #16a34a;
+}
+
+.snapDailyReturn.negative {
+    background: rgba(239, 68, 68, 0.1);
+    color: #dc2626;
+}
+
+/* 现金比例 */
+.snapCash {
+    font-size: 11px;
+    color: var(--muted);
+    background: rgba(0, 0, 0, 0.05);
+    padding: 2px 6px;
+    border-radius: 8px;
+}
+
+/* 最终持仓明细 */
+.finalPositionsSection {
+    margin-top: 12px;
+}
+
+.finalPositionsList {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.finalPositionItem {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--dim);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.finalPositionItem.profitUp {
+    border-left: 3px solid #22c55e;
+}
+
+.finalPositionItem.profitDown {
+    border-left: 3px solid #ef4444;
+}
+
+.posCode {
+    font-weight: 600;
+    color: var(--primary);
+    min-width: 70px;
+}
+
+.posShares {
+    color: var(--text);
+    min-width: 80px;
+}
+
+.posValue {
+    color: var(--text);
+    min-width: 100px;
+}
+
+.posWeight {
+    color: var(--muted);
+    min-width: 70px;
+}
+
+.posPnl {
+    font-weight: 600;
+    min-width: 70px;
+    text-align: right;
+}
+
+.posPnl.positive {
+    color: #22c55e;
+}
+
+.posPnl.negative {
+    color: #ef4444;
+}
+
+/* ==================== 登录页样式 ==================== */
+.loginPage {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.loginCard {
+    width: 100%;
+    max-width: 400px;
+    background: rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--panelBorder);
+    border-radius: 16px;
+    padding: 40px 36px;
+    box-shadow: var(--shadow-panel), 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+}
+
+.loginLogo {
+    text-align: center;
+    margin-bottom: 28px;
+}
+
+.loginLogo h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+}
+
+.loginLogo p {
+    margin: 6px 0 0;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.loginTabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 28px;
+    background: rgba(0, 0, 0, 0.2);
+    padding: 4px;
+    border-radius: var(--radius-md);
+}
+
+.loginTab {
+    flex: 1;
+    padding: 10px 16px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.loginTab:hover {
+    color: var(--text);
+}
+
+.loginTabActive {
+    background: rgba(86, 185, 255, 0.2);
+    color: var(--primary);
+}
+
+.loginForm {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.loginField {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.loginField label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+}
+
+.loginField .input {
+    padding: 12px 14px;
+    font-size: 15px;
+}
+
+.loginCheckbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.loginCheckbox input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
+    cursor: pointer;
+}
+
+.loginCheckbox:hover {
+    color: var(--text);
+}
+
+.loginError {
+    padding: 10px 12px;
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.35);
+    border-radius: 8px;
+    font-size: 13px;
+    color: #f87171;
+}
+
+.loginSubmit {
+    width: 100%;
+    padding: 14px 20px;
+    margin-top: 6px;
+    border: 1px solid rgba(86, 185, 255, 0.5);
+    border-radius: 10px;
+    background: linear-gradient(135deg, rgba(86, 185, 255, 0.25) 0%, rgba(86, 185, 255, 0.12) 100%);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.loginSubmit:hover:not(:disabled) {
+    background: linear-gradient(135deg, rgba(86, 185, 255, 0.35) 0%, rgba(86, 185, 255, 0.18) 100%);
+    box-shadow: 0 4px 16px rgba(86, 185, 255, 0.25);
+}
+
+.loginSubmit:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.loginSwitch {
+    text-align: center;
+    margin-top: 24px;
+    padding-top: 24px;
+    border-top: 1px solid var(--panelBorder);
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.loginSwitch a {
+    color: var(--primary);
+    text-decoration: none;
+    margin-left: 4px;
+    font-weight: 500;
+}
+
+.loginSwitch a:hover {
+    text-decoration: underline;
+}
