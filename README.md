@@ -29,12 +29,12 @@
 
 | 模块 | 说明 | 文档 |
 |------|------|------|
-| **研究资讯** | Research Agent（CNINFO 公告、知识库、行情）；News Agent 暂不可用 | [研究资讯前端使用](docs/研究资讯前端使用.md) |
-| **量化回测** | AI Agent 量化、普通回测、AI 实时决策、LLM 信号回测 | [量化回测与AI决策](docs/量化回测与AI决策.md) |
-| **选股池** | 股票池管理、信号与仓位、组合回测、模拟仓 | [选股池与模拟仓](docs/选股池与模拟仓.md) |
-| **因子挖掘** | 深度挖掘与回测、Agent 工作流、稳健性检查、保存摘要 | [因子挖掘与回测](docs/因子挖掘与回测.md) |
-| **ETF 轮动** | 回测分析、调仓建议、模拟盘、实盘（QMT） | [ETF轮动前端与模拟盘](docs/ETF轮动前端与模拟盘.md)、[ETF轮动策略交易逻辑](docs/etf_rotation_trading_logic.md) |
-| **知识库** | FAISS 向量库、公告/PDF 入库、语义检索 | [knowledge](docs/knowledge.md)、[knowledge_integration](docs/knowledge_integration.md) |
+| **研究资讯** | Research Agent（CNINFO 公告、知识库、行情）；News Agent 暂不可用 | [研究资讯](docs/module/研究资讯.md) |
+| **量化回测** | AI Agent 量化、普通回测、AI 实时决策、LLM 信号回测 | [量化回测与AI决策](docs/module/量化回测与AI决策.md) |
+| **选股池** | 股票池管理、信号与仓位、组合回测、模拟仓 | [选股池与模拟仓](docs/module/选股池与模拟仓.md) |
+| **因子挖掘** | 深度挖掘与回测、Agent 工作流、稳健性检查、保存摘要 | [因子挖掘与回测](docs/module/因子挖掘与回测.md) |
+| **ETF 轮动** | 回测分析、调仓建议、模拟盘、实盘（QMT） | [ETF轮动前端与模拟盘](docs/module/ETF轮动前端与模拟盘.md)、[ETF轮动策略交易逻辑](docs/module/detail/etf_rotation_trading_logic.md) |
+| **知识库** | FAISS 向量库、公告/PDF 入库、语义检索 | [knowledge](docs/module/detail/knowledge.md) |
 
 ---
 
@@ -89,12 +89,12 @@ stock/
 - [部署指南](docs/部署指南.md) — 环境要求与 Docker / 虚拟环境 / 手动部署步骤
 - [常见问题](docs/常见问题.md) — akshare 网络错误、Python、API 密钥、端口等
 - [使用示例](docs/使用示例.md) — 各功能操作步骤与示例
-- [因子挖掘与回测](docs/因子挖掘与回测.md)
-- [量化回测与AI决策](docs/量化回测与AI决策.md)
-- [选股池与模拟仓](docs/选股池与模拟仓.md)
-- [ETF轮动前端与模拟盘](docs/ETF轮动前端与模拟盘.md)、[ETF轮动策略交易逻辑](docs/etf_rotation_trading_logic.md)
-- [研究资讯前端使用](docs/研究资讯前端使用.md)
-- [knowledge](docs/knowledge.md)、[knowledge_integration](docs/knowledge_integration.md)
+- [因子挖掘与回测](docs/module/因子挖掘与回测.md)
+- [量化回测与AI决策](docs/module/量化回测与AI决策.md)
+- [选股池与模拟仓](docs/module/选股池与模拟仓.md)
+- [ETF轮动前端与模拟盘](docs/module/ETF轮动前端与模拟盘.md)、[ETF轮动策略交易逻辑](docs/module/detail/etf_rotation_trading_logic.md)
+- [研究资讯](docs/module/研究资讯.md)
+- [knowledge](docs/module/detail/knowledge.md)
 
 ---
 

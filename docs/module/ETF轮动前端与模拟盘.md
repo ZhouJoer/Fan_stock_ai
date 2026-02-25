@@ -1,6 +1,6 @@
 # ETF 轮动与模拟盘：使用说明
 
-本文档介绍 **ETF 轮动回测、调仓建议、ETF 模拟盘与 AI 轮动** 的使用方法。策略与交易细节（仓位计算、轮动触发条件、交易顺序等）见 [etf_rotation_trading_logic.md](etf_rotation_trading_logic.md)。
+本文档介绍 **ETF 轮动回测、调仓建议、ETF 模拟盘与 AI 轮动** 的使用方法。策略与交易细节（仓位计算、轮动触发条件、交易顺序等）见 [etf_rotation_trading_logic.md](detail/etf_rotation_trading_logic.md)。
 
 ---
 
@@ -26,7 +26,7 @@
 ```
 
 - **本篇重点**：如何配置参数、运行回测、查看图表与调仓建议，以及如何使用 ETF 模拟盘。
-- **算法与交易逻辑细节**：见 [etf_rotation_trading_logic.md](etf_rotation_trading_logic.md)。
+- **算法与交易逻辑细节**：见 [etf_rotation_trading_logic.md](detail/etf_rotation_trading_logic.md)。
 
 **策略应用流程**：典型流程为 **回测 → 模拟盘 → 实盘**。本模块提供**回测**与**模拟盘**功能（实盘需依赖其他系统或人工执行）。
 
@@ -55,7 +55,7 @@
   - 在「添加 ETF 代码」输入框中键入代码（如 `510300`），按回车或点击「添加」；
 - 快捷添加：系统提供默认 ETF 列表（如宽基、行业等），点击对应按钮即可将推荐 ETF 加入当前池。
 
-![ETF 池列表与添加](images/etf_rotation_pool.png)
+![ETF 池列表与添加](../images/etf_rotation_pool.png)
 
 ### 2.2 回测参数配置
 
@@ -84,7 +84,7 @@
 
 可以根据个人偏好先使用「无再平衡 + Top-1」做简单轮动，再尝试引入再平衡与多只持仓。
 
-![ETF 回测参数配置](images/etf_rotation_backtest_params.png)
+![ETF 回测参数配置](../images/etf_rotation_backtest_params.png)
 
 ### 2.3 AI 增强与实时进度
 
@@ -104,7 +104,7 @@
 - 最近若干笔交易的文本摘要；
 - 可选：回测图表（失败时不显示）。
 
-![ETF 回测结果卡片与图表](images/etf_rotation_backtest_result.png)
+![ETF 回测结果卡片与图表](../images/etf_rotation_backtest_result.png)
 
 ---
 
@@ -126,7 +126,7 @@
 - 当前持仓表格：ETF 代码、持仓股数、成本价、现价、市值、盈亏；
 - 最近交易记录（支持分页查看）。
 
-![模拟盘账户信息与持仓](images/etf_rotation_sim_positions.png)
+![模拟盘账户信息与持仓](../images/etf_rotation_sim_positions.png)
 
 ### 3.3 ETF 池与自动调仓
 
@@ -165,7 +165,5 @@
 - 若有详细分析报告，则以长文本展示。
 
 这一模式适合在做大规模回测前，通过 LLM 快速获取一次性调仓建议，辅助决策候选 ETF 集合。
-
-![AI 轮动分析结果](images/etf_rotation_ai_result.png)
 
 ---

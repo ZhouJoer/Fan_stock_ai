@@ -112,9 +112,9 @@
    - 回测指标（收益、夏普、回撤、胜率等）；
    - Quant_Auditor 给出的审计结论与风险提示。
 
-![AI Agent 量化输入区示意](images/quant_agent_request.png)
+![AI Agent 量化输入区示意](../images/quant_agent_request.png)
 
-![AI Agent 量化结果报告](images/quant_agent_report.png)
+![AI Agent 量化结果报告](../images/quant_agent_report.png)
 
 ### 3.2 普通回测：验证单一规则策略
 
@@ -132,9 +132,9 @@
    - 回测图表（7 合 1 图或综合图表）；
    - 交易次数与胜率。
 
-![普通回测参数配置](images/quant_backtest_params.png)
+![普通回测参数配置](../images/quant_backtest_params.png)
 
-![普通回测结果与图表](images/quant_backtest_result.png)
+![普通回测结果与图表](../images/quant_backtest_result.png)
 
 ### 3.3 AI 实时决策 + LLM 回测
 
