@@ -5,6 +5,7 @@ langchain-huggingface
 langchain-text-splitters
 langgraph
 akshare
+baostock
 pandas
 numpy
 matplotlib

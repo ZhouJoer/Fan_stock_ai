@@ -22,6 +22,14 @@ export default defineConfig(({ mode }) => {
                         proxy.on('proxyReq', (proxyReq, req) => {
                             req.on('aborted', () => proxyReq.destroy())
                         })
+                        // SSE/流式响应：服务端关闭时同步关闭客户端，避免连接挂起
+                        proxy.on('proxyRes', (proxyRes, req, res) => {
+                            proxyRes.on('close', () => {
+                                if (proxyRes.errored && !res.closed) {
+                                    res.destroy(proxyRes.errored)
+                                }
+                            })
+                        })
                     }
                 }
             }

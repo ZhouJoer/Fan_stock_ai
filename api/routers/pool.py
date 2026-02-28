@@ -212,6 +212,7 @@ class FactorDeepSearchRequest(BaseModel):
     cap_scope: str = "none"
     small_cap_threshold_billion: float = 30.0
     n_trials: int | None = None
+    force_refresh_data: bool = True  # 挖掘时优先拉取最新行情，减少旧缓存
 
 
 class StockPoolSimAccountCreateRequest(BaseModel):
@@ -251,6 +252,35 @@ class FactorBacktestRequest(BaseModel):
     cap_scope: str = "none"
     position_weight_method: str = "equal"
     robustness_check: bool = False
+
+
+class FactorBacktestBatchItem(BaseModel):
+    rank: int | None = None
+    factor_combo: list[str] = []
+    weights: dict[str, float] = {}
+    factor_quality: dict | None = None
+
+
+class FactorBacktestBatchRequest(BaseModel):
+    stocks: list[str] = []
+    universe_source: str = "manual"
+    universe_index: str = ""
+    industry_list: list[str] | None = None
+    leaders_per_industry: int = 1
+    max_stocks: int = 60
+    days: int = 252
+    label_horizon: int = 5
+    rebalance_freq: int = 1
+    benchmark_code: str = "510300"
+    top_n: int = 10
+    exclude_kechuang: bool = False
+    exclude_small_cap: bool = False
+    small_cap_max_billion: float = 30.0
+    cap_scope: str = "none"
+    position_weight_method: str = "equal"
+    similarity_threshold: float = 0.8
+    max_combos: int = 20
+    factor_combos: list[FactorBacktestBatchItem] = []
 
 
 @router.post("/pool/signals")
@@ -486,20 +516,36 @@ async def pool_backtest_stop(req: PoolBacktestStopRequest):
 
 
 def _n_trials_from_req(req: FactorDeepSearchRequest) -> int | None:
-    """迭代次数：1–150，未传则返回 None（由下游用默认）。"""
+    """迭代次数：1–200，未传则返回 None（由下游用默认）。"""
     raw = getattr(req, "n_trials", None)
     if raw is None:
         return None
-    n = max(1, min(150, int(raw or 0)))
+    n = max(1, min(200, int(raw or 0)))
     return n if n > 0 else None
 
 
 def _max_combos_from_req(req: FactorDeepSearchRequest) -> int:
-    """尝试组数：与迭代次数一致（n_trials 有值时用 n_trials 且上限 150），否则用 max_combos。"""
+    """尝试组数：与迭代次数一致（n_trials 有值时用 n_trials 且上限 200），否则用 max_combos。"""
     n_trials = _n_trials_from_req(req)
     if n_trials is not None:
         return n_trials
-    return max(1, min(150, int(getattr(req, "max_combos", 15) or 15)))
+    return max(1, min(200, int(getattr(req, "max_combos", 15) or 15)))
+
+
+def _max_stocks_from_req(raw_max_stocks, default: int = 60) -> int:
+    """
+    解析 max_stocks：
+    - None -> default
+    - 0 -> 0（表示不截断）
+    - 负数 -> 0
+    """
+    if raw_max_stocks is None:
+        return int(default)
+    try:
+        v = int(raw_max_stocks)
+    except Exception:
+        return int(default)
+    return max(0, v)
 
 
 def _build_deep_search_params(req: FactorDeepSearchRequest) -> dict:
@@ -513,7 +559,7 @@ def _build_deep_search_params(req: FactorDeepSearchRequest) -> dict:
         "industry_list": ",".join(req.industry_list) if isinstance(req.industry_list, list) else (req.industry_list or ""),
         "leaders_per_industry": max(1, int(req.leaders_per_industry or 1)),
         "stocks": ",".join(req.stocks) if isinstance(req.stocks, list) else (req.stocks or ""),
-        "max_stocks": int(req.max_stocks or 60),
+        "max_stocks": _max_stocks_from_req(getattr(req, "max_stocks", None), default=60),
         "days": int(req.days or 252),
         "factor_sets": (req.factor_sets or "style,trading,hybrid").strip(),
         "horizons": (req.horizons or "1,3,5").strip(),
@@ -536,6 +582,7 @@ def _build_deep_search_params(req: FactorDeepSearchRequest) -> dict:
         "cap_scope": (req.cap_scope or "none").strip() or "none",
         "small_cap_threshold_billion": float(getattr(req, "small_cap_threshold_billion", 30)),
         "n_trials": _n_trials_from_req(req),
+        "force_refresh_data": bool(getattr(req, "force_refresh_data", True)),
     }
 
 
@@ -622,6 +669,8 @@ async def pool_factor_deep_search_stream(
         return json.dumps(m, ensure_ascii=False, default=_default)
 
     async def event_gen():
+        # 建立连接后立即发送一条进度，便于前端立刻有反馈、代理尽快刷新缓冲
+        yield f"data: {json.dumps({'type': 'progress', 'current': 0, 'total': 1, 'message': '已连接，正在启动…'})}\n\n"
         loop = asyncio.get_event_loop()
         while True:
             try:
@@ -636,7 +685,7 @@ async def pool_factor_deep_search_stream(
     return StreamingResponse(
         event_gen(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 
@@ -666,7 +715,7 @@ def _build_factor_backtest_params(req: FactorBacktestRequest) -> dict:
         "industry_list": ",".join(req.industry_list) if isinstance(req.industry_list, list) else (req.industry_list or ""),
         "leaders_per_industry": max(1, int(req.leaders_per_industry or 1)),
         "stocks": ",".join(req.stocks) if isinstance(req.stocks, list) else (req.stocks or ""),
-        "max_stocks": int(req.max_stocks or 60),
+        "max_stocks": _max_stocks_from_req(getattr(req, "max_stocks", None), default=60),
         "days": int(req.days or 252),
         "label_horizon": max(1, int(req.label_horizon or 5)),
         "rebalance_freq": max(1, int(req.rebalance_freq or 1)),
@@ -683,6 +732,42 @@ def _build_factor_backtest_params(req: FactorBacktestRequest) -> dict:
     }
 
 
+def _build_factor_backtest_batch_params(req: FactorBacktestBatchRequest) -> dict:
+    universe_source = (req.universe_source or "manual").strip() or "manual"
+    universe_index = (req.universe_index or "").strip()
+    if universe_source == "index" and not universe_index:
+        universe_index = "000300"
+    return {
+        "universe_source": universe_source,
+        "universe_index": universe_index,
+        "industry_list": ",".join(req.industry_list) if isinstance(req.industry_list, list) else (req.industry_list or ""),
+        "leaders_per_industry": max(1, int(req.leaders_per_industry or 1)),
+        "stocks": ",".join(req.stocks) if isinstance(req.stocks, list) else (req.stocks or ""),
+        "max_stocks": _max_stocks_from_req(getattr(req, "max_stocks", None), default=60),
+        "days": int(req.days or 252),
+        "label_horizon": max(1, int(req.label_horizon or 5)),
+        "rebalance_freq": max(1, int(req.rebalance_freq or 1)),
+        "benchmark_code": (req.benchmark_code or "510300").strip() or "510300",
+        "top_n": max(1, min(int(req.top_n or 10), 50)),
+        "exclude_kechuang": bool(req.exclude_kechuang),
+        "exclude_small_cap": bool(req.exclude_small_cap),
+        "small_cap_max_billion": float(req.small_cap_max_billion or 30),
+        "cap_scope": (req.cap_scope or "none").strip() or "none",
+        "position_weight_method": (req.position_weight_method or "equal").strip().lower() or "equal",
+        "similarity_threshold": float(req.similarity_threshold or 0.8),
+        "max_combos": max(1, min(int(req.max_combos or 20), 50)),
+        "factor_combos": [
+            {
+                "rank": it.rank if it.rank is not None else idx + 1,
+                "factor_combo": it.factor_combo or [],
+                "weights": it.weights or {},
+                "factor_quality": it.factor_quality or {},
+            }
+            for idx, it in enumerate(req.factor_combos or [])
+        ],
+    }
+
+
 @router.post("/pool/factor-backtest")
 async def pool_factor_backtest(
     req: FactorBacktestRequest,
@@ -692,6 +777,20 @@ async def pool_factor_backtest(
     try:
         from tools.deep_factor_search import run_factor_backtest_only
         result = run_factor_backtest_only(_build_factor_backtest_params(req))
+        return {"result": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/pool/factor-backtest-batch")
+async def pool_factor_backtest_batch(
+    req: FactorBacktestBatchRequest,
+    user: dict = Depends(get_current_user),
+):
+    """因子组合批量回测（一次数据加载 + 一次日历遍历），用于比较前 N 组合。"""
+    try:
+        from tools.deep_factor_search import run_factor_backtest_batch
+        result = run_factor_backtest_batch(_build_factor_backtest_batch_params(req))
         return {"result": result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -811,6 +910,8 @@ class BacktestSummarySaveRequest(BaseModel):
     max_drawdown: float | None = None
     total_return: float | None = None
     sharpe_annual: float | None = None
+    factor_profile: list[dict] | None = None
+    strategy_meta: dict | None = None
 
 
 @router.post("/pool/backtest-summaries")
@@ -846,6 +947,8 @@ async def pool_backtest_summary_save(
         "total_return": req.total_return,
         "sharpe_annual": req.sharpe_annual,
         "alpha_beta": req.alpha_beta or ({"alpha": req.alpha, "beta": req.beta, "annualized_alpha": req.annualized_alpha, "r_squared": req.r_squared} if (req.alpha is not None or req.beta is not None) else None),
+        "factor_profile": req.factor_profile or [],
+        "strategy_meta": req.strategy_meta or {},
     }
     items.append(entry)
     _save_backtest_summaries(user["user_id"], items)
@@ -896,6 +999,100 @@ async def pool_available_factors():
         return {"result": factors}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pool/data-source/check")
+async def pool_data_source_check(user: dict = Depends(get_current_user)):
+    """检查数据源可用性（akshare + 东方财富链路），用于前端一键诊断。"""
+    import urllib.request
+    from datetime import timedelta
+    report: dict = {
+        "ok": False,
+        "python": os.sys.version.split()[0],
+        "proxy": {
+            "http_proxy": os.environ.get("HTTP_PROXY") or "",
+            "https_proxy": os.environ.get("HTTPS_PROXY") or "",
+            "no_proxy": os.environ.get("NO_PROXY") or "",
+        },
+        "network": {"ok": False, "error": ""},
+        "akshare": {"ok": False, "version": "", "error": ""},
+        "eastmoney_hist": {"ok": False, "rows": 0, "error": ""},
+        "baostock_hist": {"ok": False, "rows": 0, "error": ""},
+        "stock_source_priority": ["akshare", "baostock"],
+    }
+    # 1) 基础网络
+    try:
+        req = urllib.request.Request("https://www.baidu.com", headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            report["network"]["ok"] = bool(getattr(r, "status", 0) == 200)
+    except Exception as e:
+        report["network"]["error"] = f"{type(e).__name__}: {str(e)[:180]}"
+
+    # 2) akshare 导入
+    try:
+        import akshare as ak
+        report["akshare"]["version"] = getattr(ak, "__version__", "unknown")
+        report["akshare"]["ok"] = True
+    except Exception as e:
+        report["akshare"]["error"] = f"{type(e).__name__}: {str(e)[:180]}"
+        return report
+
+    # 3) 与回测一致的真实请求链路（东方财富日线）
+    try:
+        import akshare as ak
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
+        df = ak.stock_zh_a_hist(
+            symbol="000001",
+            period="daily",
+            start_date=start_date,
+            end_date=end_date,
+            adjust="qfq",
+        )
+        rows = int(len(df)) if df is not None else 0
+        report["eastmoney_hist"]["rows"] = rows
+        report["eastmoney_hist"]["ok"] = rows > 0
+    except Exception as e:
+        report["eastmoney_hist"]["error"] = f"{type(e).__name__}: {str(e)[:180]}"
+
+    # 4) 备用源 baostock 链路
+    try:
+        from tools.data_sources import fetch_stock_hist_baostock
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
+        bdf = fetch_stock_hist_baostock("000001", start_date, end_date)
+        brows = int(len(bdf)) if bdf is not None else 0
+        report["baostock_hist"]["rows"] = brows
+        report["baostock_hist"]["ok"] = brows > 0
+    except Exception as e:
+        report["baostock_hist"]["error"] = f"{type(e).__name__}: {str(e)[:180]}"
+
+    report["ok"] = bool(
+        report["network"]["ok"]
+        and report["akshare"]["ok"]
+        and (report["eastmoney_hist"]["ok"] or report["baostock_hist"]["ok"])
+    )
+    # 按检查结果动态更新拉数优先级：可用源优先，失败源后置
+    try:
+        from tools.data_sources import (
+            set_stock_source_priority,
+            mark_source_unavailable,
+            clear_source_unavailable,
+        )
+        if report["eastmoney_hist"]["ok"] and not report["baostock_hist"]["ok"]:
+            report["stock_source_priority"] = set_stock_source_priority(["akshare", "baostock"])
+            clear_source_unavailable("akshare")
+        elif report["baostock_hist"]["ok"] and not report["eastmoney_hist"]["ok"]:
+            report["stock_source_priority"] = set_stock_source_priority(["baostock", "akshare"])
+            mark_source_unavailable("akshare", cooldown_seconds=600)
+        elif report["baostock_hist"]["ok"] and report["eastmoney_hist"]["ok"]:
+            report["stock_source_priority"] = set_stock_source_priority(["akshare", "baostock"])
+            clear_source_unavailable("akshare")
+        else:
+            report["stock_source_priority"] = set_stock_source_priority(["akshare", "baostock"])
+    except Exception:
+        pass
+    return report
 
 
 @router.get("/pool/factor-storage/names")

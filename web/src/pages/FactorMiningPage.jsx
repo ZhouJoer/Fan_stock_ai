@@ -33,6 +33,8 @@ export default function FactorMiningPage() {
     const [agentLogPanelOpen, setAgentLogPanelOpen] = useState(false)
     const [availableFactorsList, setAvailableFactorsList] = useState(null)
     const [availableFactorsPanelOpen, setAvailableFactorsPanelOpen] = useState(false)
+    const [dataSourceChecking, setDataSourceChecking] = useState(false)
+    const [dataSourceReport, setDataSourceReport] = useState(null)
     const [rebalanceDetailsOpen, setRebalanceDetailsOpen] = useState(false)
     const [factorBacktestLoading, setFactorBacktestLoading] = useState(false)
     const [factorBacktestResult, setFactorBacktestResult] = useState(null)
@@ -47,6 +49,12 @@ export default function FactorMiningPage() {
     const [backtestPoolMode, setBacktestPoolMode] = useState('same')
     const [backtestManualStocks, setBacktestManualStocks] = useState('')
     const [backtestProgress, setBacktestProgress] = useState({ phase: '', pct: 0, message: '' })
+    const [batchBacktestTopK, setBatchBacktestTopK] = useState(5)
+    const [batchSimilarityThreshold, setBatchSimilarityThreshold] = useState(0.8)
+    const [batchBacktestLoading, setBatchBacktestLoading] = useState(false)
+    const [batchBacktestProgress, setBatchBacktestProgress] = useState({ current: 0, total: 0, message: '' })
+    const [batchBacktestResults, setBatchBacktestResults] = useState([])
+    const [selectedBatchRank, setSelectedBatchRank] = useState(null)
     const [savedSummaries, setSavedSummaries] = useState([])
     const [saveSummaryTitle, setSaveSummaryTitle] = useState('')
     const deepSearchEventSourceRef = useRef(null)
@@ -68,6 +76,7 @@ export default function FactorMiningPage() {
         const space = deepSearchResult?.search_space
         if (!best || deepSearchResult === lastSyncedResultRef.current) return
         lastSyncedResultRef.current = deepSearchResult
+        setSelectedBatchRank(null)
         const miningTopN = best.top_n ?? space?.top_n ?? 10
         const miningRebal = best.rebalance_freq ?? space?.rebalance_freq ?? 1
         const miningDays = space?.days ?? 252
@@ -82,9 +91,20 @@ export default function FactorMiningPage() {
             .catch(() => {})
     }, [])
 
+    // 进入页面时拉取最新因子库，便于展开「可选因子」时直接展示
+    useEffect(() => {
+        poolApi.availableFactors()
+            .then(data => { if (Array.isArray(data?.result)) setAvailableFactorsList(data.result) })
+            .catch(() => {})
+    }, [])
+
     const manualStocks = useMemo(
         () => stockInput.split(',').map(x => x.trim()).filter(Boolean),
         [stockInput]
+    )
+    const selectedBatchRow = useMemo(
+        () => batchBacktestResults.find(r => Number(r?.rank) === Number(selectedBatchRank)) || null,
+        [batchBacktestResults, selectedBatchRank]
     )
 
     function getUniverseValidationError() {
@@ -99,6 +119,32 @@ export default function FactorMiningPage() {
         if (universeErr) return universeErr
         if (universeSource === 'manual' && manualStocks.length < 8) return '深度搜索至少需要约 8 只股票，建议 10+ 只'
         return ''
+    }
+
+    function getActiveBacktestTarget() {
+        const best = deepSearchResult?.best
+        if (selectedBatchRow?.combo?.length) {
+            const result = selectedBatchRow?.result || {}
+            const combo = selectedBatchRow.combo
+            const weights = (result.weights && typeof result.weights === 'object') ? result.weights : {}
+            const factor_profile = Array.isArray(result.factor_profile) ? result.factor_profile : []
+            return {
+                source: 'batch',
+                rank: selectedBatchRow.rank,
+                combo,
+                weights,
+                label_horizon: Number(best?.label_horizon) || deepSearchLabelHorizon || 5,
+                factor_profile,
+            }
+        }
+        return {
+            source: 'best',
+            rank: null,
+            combo: best?.best_factor_combo || [],
+            weights: best?.learned_weights || {},
+            label_horizon: Number(best?.label_horizon) || deepSearchLabelHorizon || 5,
+            factor_profile: [],
+        }
     }
 
     function buildDeepSearchPayload() {
@@ -122,8 +168,9 @@ export default function FactorMiningPage() {
             top_n: Math.max(1, Math.min(Number(deepSearchTopN) || 10, 50)),
             orchestrate_tasks: deepSearchOrchestrateTasks,
             orchestrate_user_preference: deepSearchOrchestrateTasks ? (deepSearchOrchestratePreference || '').trim() : '',
-            max_combos: Math.max(1, Math.min(150, Number(deepSearchNTrials) || 8)),
-            n_trials: Math.max(1, Math.min(150, Number(deepSearchNTrials) || 8))
+            max_combos: Math.max(1, Math.min(200, Number(deepSearchNTrials) || 8)),
+            n_trials: Math.max(1, Math.min(200, Number(deepSearchNTrials) || 8)),
+            force_refresh_data: true  // 挖掘时拉取最新行情并更新因子库
         }
     }
 
@@ -143,6 +190,10 @@ export default function FactorMiningPage() {
         setDeepSearchProgress({ current: 0, total: 0, message: '' })
         setAgentLogs([])
         try {
+            // 挖掘前刷新因子库，与后端保持一致
+            poolApi.availableFactors()
+                .then(data => { if (Array.isArray(data?.result)) setAvailableFactorsList(data.result) })
+                .catch(() => {})
             const payload = buildDeepSearchPayload()
             const data = await poolApi.factorDeepSearchStart(payload)
             const sessionId = data?.session_id
@@ -212,6 +263,8 @@ export default function FactorMiningPage() {
                     await new Promise(r => setTimeout(r, 2000))
                     continue
                 }
+                // 连接成功即更新进度，避免界面长时间无反应（尤其代理缓冲时）
+                setDeepSearchProgress({ current: 0, total: 1, message: '已连接，正在启动…' })
                 const reader = resp.body.getReader()
                 const decoder = new TextDecoder()
                 let buf = ''
@@ -224,13 +277,18 @@ export default function FactorMiningPage() {
                         const lines = buf.split('\n\n')
                         buf = lines.pop() || ''
                         for (const block of lines) {
-                            const m = block.match(/^data:\s*(\{.*\})\s*$/m)
-                            if (m) {
-                                const msg = JSON.parse(m[1])
-                                if (msg.type === 'keepalive') continue
-                                handleMsg(msg)
-                                if (msg.type === 'complete' || msg.type === 'error') { finished = true; return }
+                            if (!block.startsWith('data:')) continue
+                            const jsonStr = block.replace(/^data:\s*/, '').trim()
+                            if (!jsonStr) continue
+                            let msg
+                            try {
+                                msg = JSON.parse(jsonStr)
+                            } catch (_) {
+                                continue
                             }
+                            if (msg.type === 'keepalive') continue
+                            handleMsg(msg)
+                            if (msg.type === 'complete' || msg.type === 'error') { finished = true; return }
                         }
                     }
                 } catch (e) {
@@ -266,6 +324,24 @@ export default function FactorMiningPage() {
         setDeepSearchBusy(false)
     }
 
+    async function checkDataSource() {
+        if (dataSourceChecking) return
+        setDataSourceChecking(true)
+        try {
+            const data = await poolApi.dataSourceCheck()
+            setDataSourceReport(data || null)
+        } catch (e) {
+            setDataSourceReport({
+                ok: false,
+                network: { ok: false, error: String(e?.message || e) },
+                akshare: { ok: false, version: '', error: '检查失败' },
+                eastmoney_hist: { ok: false, rows: 0, error: '' },
+            })
+        } finally {
+            setDataSourceChecking(false)
+        }
+    }
+
     /** 将深度搜索最佳结果同步到深度挖掘参数 */
     function loadDeepSearchResultToMining() {
         const best = deepSearchResult?.best
@@ -274,41 +350,33 @@ export default function FactorMiningPage() {
         setDeepSearchError('')
     }
 
-    /** 仅回测：用 start + stream 获取真实进度（加载数据、回测天数） */
-    async function runFactorBacktest() {
-        const best = deepSearchResult?.best
-        if (!best?.best_factor_combo?.length) {
-            setDeepSearchError('请先完成深度搜索并获得最佳组合后再执行仅回测')
-            return
-        }
-        setFactorBacktestLoading(true)
-        setFactorBacktestResult(null)
-        setRebalanceDetailsOpen(false)
-        setBacktestProgress({ phase: '', pct: 0, message: '准备中…' })
-        const base = buildDeepSearchPayload()
+    function buildBacktestBasePayload(base) {
         let universe_source = base.universe_source || 'manual'
         let universe_index = (base.universe_index || '').trim() || ''
         let stocks = base.stocks
+        let max_stocks = base.max_stocks
         if (backtestPoolMode === 'index_000300') {
             universe_source = 'index'
             universe_index = '000300'
             stocks = []
+            max_stocks = 0 // 指数模式不截断，使用完整成分股
         } else if (backtestPoolMode === 'index_000016') {
             universe_source = 'index'
             universe_index = '000016'
             stocks = []
+            max_stocks = 0 // 指数模式不截断，使用完整成分股
         } else if (backtestPoolMode === 'manual') {
             universe_source = 'manual'
             universe_index = ''
             stocks = (backtestManualStocks || '').split(',').map(s => s.trim()).filter(Boolean)
         }
-        const payload = {
+        return {
             stocks,
             universe_source,
             universe_index,
             industry_list: backtestPoolMode === 'same' ? base.industry_list : [],
             leaders_per_industry: backtestPoolMode === 'same' ? base.leaders_per_industry : 1,
-            max_stocks: base.max_stocks,
+            max_stocks,
             days: Number(backtestDays) || base.days,
             benchmark_code: base.benchmark_code,
             exclude_kechuang: backtestExcludeKechuang,
@@ -316,9 +384,26 @@ export default function FactorMiningPage() {
             cap_scope: backtestCapScope,
             small_cap_max_billion: Number(backtestSmallCapMaxBillion) || 30,
             small_cap_threshold_billion: Number(backtestSmallCapMaxBillion) || 30,
-            factor_combo: best.best_factor_combo,
-            weights: best.learned_weights || {},
-            label_horizon: Number(best.label_horizon) || deepSearchLabelHorizon || 5,
+        }
+    }
+
+    /** 仅回测：用 start + stream 获取真实进度（加载数据、回测天数） */
+    async function runFactorBacktest() {
+        const target = getActiveBacktestTarget()
+        if (!target?.combo?.length) {
+            setDeepSearchError('请先完成深度搜索，或先从批量结果中选择一个组合再执行回测')
+            return
+        }
+        setFactorBacktestLoading(true)
+        setFactorBacktestResult(null)
+        setRebalanceDetailsOpen(false)
+        setBacktestProgress({ phase: '', pct: 0, message: '准备中…' })
+        const base = buildDeepSearchPayload()
+        const payload = {
+            ...buildBacktestBasePayload(base),
+            factor_combo: target.combo,
+            weights: target.weights || {},
+            label_horizon: Number(target.label_horizon) || deepSearchLabelHorizon || 5,
             rebalance_freq: Math.max(1, Number(backtestRebalanceFreq) || 1),
             top_n: Math.max(1, Math.min(Number(backtestTopN) || 10, 50)),
             position_weight_method: (backtestPositionWeight || 'equal').trim().toLowerCase() || 'equal',
@@ -377,6 +462,78 @@ export default function FactorMiningPage() {
         } catch (e) {
             setFactorBacktestResult({ error: String(e?.message || e) })
             setFactorBacktestLoading(false)
+        }
+    }
+
+    /** 一键批量回测：按挖掘排序取前 N 个组合顺序回测 */
+    async function runTopNBatchBacktest() {
+        const best = deepSearchResult?.best
+        if (!best?.best_factor_combo?.length) {
+            setDeepSearchError('请先完成深度搜索并获得最佳组合后再执行批量回测')
+            return
+        }
+        const rankedRaw = Array.isArray(deepSearchResult?.top) ? deepSearchResult.top : []
+        const ranked = rankedRaw.filter(x => Array.isArray(x?.best_factor_combo) && x.best_factor_combo.length > 0)
+        const fallback = [{ best_factor_combo: best.best_factor_combo || [], learned_weights: best.learned_weights || {}, backtest_stats: best.backtest_stats || {} }]
+        const sourceList = ranked.length ? ranked : fallback
+        const topK = Math.max(1, Math.min(Number(batchBacktestTopK) || 1, Math.min(20, sourceList.length)))
+        const candidatePoolSize = Math.min(sourceList.length, Math.max(topK * 5, topK + 10))
+
+        setBatchBacktestLoading(true)
+        setBatchBacktestResults([])
+        setBatchBacktestProgress({ current: 0, total: topK, message: '准备批量回测（单轮日历）…' })
+        setDeepSearchError('')
+        try {
+            const base = buildDeepSearchPayload()
+            const commonPayload = buildBacktestBasePayload(base)
+            const factor_combos = sourceList.slice(0, candidatePoolSize).map((item, i) => {
+                const combo = Array.isArray(item.best_factor_combo) ? item.best_factor_combo : []
+                const rawWeights = item?.learned_weights?.flat != null ? item.learned_weights.flat : (item.learned_weights || {})
+                const weights = (rawWeights && typeof rawWeights === 'object' && !Array.isArray(rawWeights)) ? rawWeights : {}
+                return {
+                    rank: i + 1,
+                    factor_combo: combo,
+                    weights,
+                    factor_quality: best.factor_quality || {},
+                }
+            }).filter(x => Array.isArray(x.factor_combo) && x.factor_combo.length > 0)
+
+            const payload = {
+                ...commonPayload,
+                factor_combos,
+                label_horizon: Number(best.label_horizon) || deepSearchLabelHorizon || 5,
+                rebalance_freq: Math.max(1, Number(backtestRebalanceFreq) || 1),
+                top_n: Math.max(1, Math.min(Number(backtestTopN) || 10, 50)),
+                position_weight_method: (backtestPositionWeight || 'equal').trim().toLowerCase() || 'equal',
+                similarity_threshold: Math.min(0.99, Math.max(0.5, Number(batchSimilarityThreshold) || 0.8)),
+                max_combos: topK,
+            }
+            const resp = await poolApi.factorBacktestBatch(payload)
+            const batch = resp?.result || {}
+            if (batch?.error) {
+                setBatchBacktestResults([])
+                setBatchBacktestProgress({ current: 0, total: topK, message: '批量回测失败' })
+                setDeepSearchError(batch.error)
+                return
+            }
+            const rows = (batch.results || []).map((r, i) => ({
+                rank: r.rank || (i + 1),
+                combo: r.factor_combo || [],
+                train_sharpe: sourceList[(r.rank || (i + 1)) - 1]?.backtest_stats?.sharpe_annual,
+                result: r,
+            }))
+            setBatchBacktestResults(rows)
+            if (rows.length > 0) setSelectedBatchRank(rows[0].rank)
+            setBatchBacktestProgress({
+                current: Number(batch.filtered_count || rows.length),
+                total: Number(batch.filtered_count || rows.length),
+                message: `完成：候选 ${batch.total_input || candidatePoolSize} 组，回测前去重后 ${batch.filtered_count || rows.length} 组（目标 Top${topK}，阈值 ${Number(batch?.meta?.used_similarity_threshold ?? batchSimilarityThreshold).toFixed(2)}）`,
+            })
+            if ((batch.filtered_count || rows.length) < topK) {
+                setDeepSearchError(`去重后仅剩 ${batch.filtered_count || rows.length} 组，未凑满 Top${topK}。可提高 n_trials 或调高相似阈值。`)
+            }
+        } finally {
+            setBatchBacktestLoading(false)
         }
     }
 
@@ -467,7 +624,7 @@ export default function FactorMiningPage() {
                         </div>
                         <div className="formGroup" style={{ margin: 0 }}>
                             <label className="label">迭代次数</label>
-                            <input type="number" className="input" value={deepSearchNTrials} onChange={e => setDeepSearchNTrials(e.target.value)} min={1} max={150} title="探索/评价的因子组合组数（1–150）" />
+                            <input type="number" className="input" value={deepSearchNTrials} onChange={e => setDeepSearchNTrials(e.target.value)} min={1} max={200} title="探索/评价的因子组合组数（1–200）" />
                         </div>
                         <div className="formGroup" style={{ margin: 0 }}>
                             <label className="label">挖掘 TopN</label>
@@ -569,7 +726,30 @@ export default function FactorMiningPage() {
                                 停止搜索
                             </button>
                         )}
+                        <button
+                            type="button"
+                            className="button"
+                            style={{ marginLeft: 8 }}
+                            onClick={checkDataSource}
+                            disabled={dataSourceChecking}
+                            title="检查 akshare 与东方财富链路可用性"
+                        >
+                            {dataSourceChecking ? '检查中…' : '检查数据源'}
+                        </button>
                     </div>
+                    {dataSourceReport && (
+                        <div style={{ marginTop: 8, padding: 10, borderRadius: 8, border: `1px solid ${dataSourceReport.ok ? 'rgba(120,220,160,0.5)' : 'rgba(255,140,100,0.5)'}`, background: dataSourceReport.ok ? 'rgba(120,220,160,0.08)' : 'rgba(255,140,100,0.08)', fontSize: 12 }}>
+                            <div style={{ marginBottom: 4 }}>
+                                数据源检查：{dataSourceReport.ok ? '正常' : '异常'}（akshare {dataSourceReport?.akshare?.version || 'unknown'}）
+                            </div>
+                            <div>基础网络：{dataSourceReport?.network?.ok ? 'OK' : `失败 ${dataSourceReport?.network?.error || ''}`}</div>
+                            <div>东方财富日线：{dataSourceReport?.eastmoney_hist?.ok ? `OK（${dataSourceReport?.eastmoney_hist?.rows || 0} 条）` : `失败 ${dataSourceReport?.eastmoney_hist?.error || ''}`}</div>
+                            <div>baostock日线：{dataSourceReport?.baostock_hist?.ok ? `OK（${dataSourceReport?.baostock_hist?.rows || 0} 条）` : `失败 ${dataSourceReport?.baostock_hist?.error || ''}`}</div>
+                            {Array.isArray(dataSourceReport?.stock_source_priority) && (
+                                <div>拉取优先级：{dataSourceReport.stock_source_priority.join(' -> ')}</div>
+                            )}
+                        </div>
+                    )}
                     {deepSearchBusy && (
                         <div style={{ marginTop: 10 }}>
                             <div className="label" style={{ marginBottom: 4 }}>进度</div>
@@ -980,18 +1160,64 @@ export default function FactorMiningPage() {
                                     <button
                                         type="button"
                                         className="button"
-                                        disabled={factorBacktestLoading || !(deepSearchResult?.best?.best_factor_combo?.length)}
+                                        disabled={factorBacktestLoading || !(getActiveBacktestTarget()?.combo?.length)}
                                         onClick={runFactorBacktest}
                                     >
-                                        {factorBacktestLoading ? '回测中…' : '执行回测'}
+                                        {factorBacktestLoading ? '回测中…' : '执行回测（含稳健性可选）'}
                                     </button>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={{ fontSize: 11, opacity: 0.7 }}>Top</span>
+                                        <input
+                                            type="number"
+                                            className="input"
+                                            min={1}
+                                            max={20}
+                                            style={{ width: 56, fontSize: 11 }}
+                                            value={batchBacktestTopK}
+                                            onChange={e => setBatchBacktestTopK(e.target.value)}
+                                        />
+                                    </span>
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <span style={{ fontSize: 11, opacity: 0.7 }} title="组合相似度阈值(0.5~0.99)，越低越严格">相似阈值</span>
+                                        <input
+                                            type="number"
+                                            className="input"
+                                            min={0.5}
+                                            max={0.99}
+                                            step={0.05}
+                                            style={{ width: 64, fontSize: 11 }}
+                                            value={batchSimilarityThreshold}
+                                            onChange={e => setBatchSimilarityThreshold(e.target.value)}
+                                        />
+                                    </span>
+                                    <button
+                                        type="button"
+                                        className="button"
+                                        disabled={batchBacktestLoading || factorBacktestLoading || !(deepSearchResult?.best?.best_factor_combo?.length)}
+                                        onClick={runTopNBatchBacktest}
+                                    >
+                                        {batchBacktestLoading ? '批量回测中…' : '一键回测前N组合'}
+                                    </button>
+                                    <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.65)', padding: '2px 8px', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 6 }}>
+                                        当前回测对象：{selectedBatchRow?.combo?.length ? `批量#${selectedBatchRow.rank}` : '最佳组合'}
+                                    </span>
+                                    {selectedBatchRow?.combo?.length && (
+                                        <button
+                                            type="button"
+                                            className="button"
+                                            style={{ fontSize: 11 }}
+                                            onClick={() => setSelectedBatchRank(null)}
+                                        >
+                                            切回最佳组合
+                                        </button>
+                                    )}
                                     {(factorBacktestResult && !factorBacktestResult.error && (factorBacktestResult.backtest_stats || factorBacktestResult.alpha != null)) && (
                                         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                                             <input type="text" className="input" placeholder="摘要标题" style={{ width: 100, fontSize: 11 }} value={saveSummaryTitle} onChange={e => setSaveSummaryTitle(e.target.value)} />
                                             <button type="button" className="button" style={{ fontSize: 11 }} onClick={async () => {
-                                                const best = deepSearchResult?.best
-                                                const combo = best?.best_factor_combo || factorBacktestResult?.factor_combo || []
-                                                const rawWeights = best?.learned_weights?.flat != null ? best.learned_weights.flat : (best?.learned_weights || factorBacktestResult?.weights || {})
+                                                const target = getActiveBacktestTarget()
+                                                const combo = target?.combo || factorBacktestResult?.factor_combo || []
+                                                const rawWeights = target?.weights || factorBacktestResult?.weights || {}
                                                 const weights = typeof rawWeights === 'object' && rawWeights !== null && !Array.isArray(rawWeights) ? { ...rawWeights } : {}
                                                 if (!combo.length) return
                                                 const alpha = factorBacktestResult?.alpha ?? deepSearchResult?.alpha
@@ -1004,6 +1230,24 @@ export default function FactorMiningPage() {
                                                         title: (saveSummaryTitle || '').trim() || `回测 ${combo.join(', ')}`,
                                                         factor_combo: combo,
                                                         weights,
+                                                        factor_profile: combo.map((f) => {
+                                                            const baseName = f.endsWith('_bell') ? f.slice(0, -5) : f
+                                                            const fromTarget = Array.isArray(target?.factor_profile) ? target.factor_profile.find(p => (p?.name || p?.base_name) === f || p?.base_name === baseName) : null
+                                                            const q = fromTarget || (deepSearchResult?.best?.factor_quality || {})[f] || (deepSearchResult?.best?.factor_quality || {})[baseName] || {}
+                                                            return {
+                                                                name: f,
+                                                                base_name: baseName,
+                                                                weight: Number(weights[f] || q?.weight || 0),
+                                                                direction: q.direction || 'unknown',
+                                                                is_bell: Boolean(f.endsWith('_bell') || q.is_bell),
+                                                                bell_formula: q.bell_formula || (f.endsWith('_bell') ? '(x - 截面均值)^2' : null),
+                                                            }
+                                                        }),
+                                                        strategy_meta: {
+                                                            factor_mode: deepSearchFactorMode,
+                                                            position_weight_method: backtestPositionWeight || 'equal',
+                                                            source: target?.source === 'batch' ? `factor_mining_batch_rank_${target?.rank || ''}` : 'factor_mining_best',
+                                                        },
                                                         backtest_stats: factorBacktestResult?.backtest_stats || deepSearchResult?.backtest_stats || {},
                                                         alpha: alpha != null ? Number(alpha) : undefined,
                                                         beta: beta != null ? Number(beta) : undefined,
@@ -1016,7 +1260,7 @@ export default function FactorMiningPage() {
                                                             r_squared: r_squared != null ? Number(r_squared) : undefined
                                                         } : null,
                                                         position_weight_method: backtestPositionWeight || 'equal',
-                                                        label_horizon: Number(deepSearchResult?.best?.label_horizon) || deepSearchLabelHorizon || 5,
+                                                        label_horizon: Number(target?.label_horizon) || deepSearchLabelHorizon || 5,
                                                         rebalance_freq: Number(backtestRebalanceFreq) || 1,
                                                         top_n: Number(backtestTopN) || 10,
                                                         days: Number(backtestDays) || base.days || 252,
@@ -1042,6 +1286,80 @@ export default function FactorMiningPage() {
                                         </span>
                                     )}
                                 </div>
+                                <div style={{ marginTop: 6, fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>
+                                    目标组合：<span style={{ fontFamily: 'monospace', color: '#c8e0ff' }}>{(getActiveBacktestTarget()?.combo || []).join(', ') || '—'}</span>
+                                </div>
+                                {batchBacktestLoading && (
+                                    <div style={{ marginTop: 8 }}>
+                                        <div style={{ fontSize: 11, color: '#9db4d8', marginBottom: 4 }}>
+                                            {batchBacktestProgress.message || '批量回测进行中…'}
+                                        </div>
+                                        <div className="progressBar" style={{ height: 6, borderRadius: 3, overflow: 'hidden', background: 'rgba(255,255,255,0.1)' }}>
+                                            <div
+                                                style={{
+                                                    height: '100%',
+                                                    width: `${Math.min(100, Math.max(0, (Number(batchBacktestProgress.current || 0) / Math.max(1, Number(batchBacktestProgress.total || 1))) * 100))}%`,
+                                                    transition: 'width 0.3s ease',
+                                                    background: 'rgba(126,207,255,0.8)',
+                                                    borderRadius: 3,
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+                                {batchBacktestResults.length > 0 && (
+                                    <div style={{ marginTop: 10, borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: 8 }}>
+                                        <div style={{ fontSize: 11, color: '#9db4d8', marginBottom: 6 }}>批量回测结果（按挖掘排序前 N）</div>
+                                        <div style={{ overflowX: 'auto' }}>
+                                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                                                <thead>
+                                                    <tr style={{ background: '#1a2540' }}>
+                                                        {['可解释排名', '挖掘排名', '组合', '可解释分', '等级', '挖掘夏普', '回测夏普', '总收益', '最大回撤', '状态', '操作'].map(h => (
+                                                            <th key={h} style={{ padding: '5px 8px', textAlign: h === '组合' ? 'left' : 'right', color: '#9db4d8', fontWeight: 500 }}>{h}</th>
+                                                        ))}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {batchBacktestResults.map((row, idx) => {
+                                                        const rs = row?.result || {}
+                                                        const bs = rs?.backtest_stats || {}
+                                                        const ex = rs?.explainability || {}
+                                                        const err = rs?.error
+                                                        const isSelected = Number(selectedBatchRank) === Number(row.rank)
+                                                        return (
+                                                            <tr key={`${row.rank}-${idx}`} style={{ borderTop: '1px solid rgba(255,255,255,0.06)', background: isSelected ? 'rgba(126,207,255,0.12)' : 'transparent' }}>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{rs.explainability_rank != null ? rs.explainability_rank : (idx + 1)}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.rank}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'left', fontFamily: 'monospace' }}>{(row.combo || []).join(', ')}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{ex.score != null ? Number(ex.score).toFixed(1) : '—'}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right', color: ex.grade === 'A' ? '#80e8a0' : ex.grade === 'B' ? '#b7e3ff' : ex.grade === 'C' ? '#ffd080' : '#ff9090' }}>{ex.grade || '—'}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{row.train_sharpe != null ? Number(row.train_sharpe).toFixed(3) : '—'}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{bs.sharpe_annual != null ? Number(bs.sharpe_annual).toFixed(3) : '—'}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{bs.total_return != null ? `${(Number(bs.total_return) * 100).toFixed(2)}%` : '—'}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{bs.max_drawdown != null ? `${(Number(bs.max_drawdown) * 100).toFixed(2)}%` : '—'}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right', color: err ? '#ff9090' : '#80e8a0' }}>{err ? '失败' : '成功'}</td>
+                                                                <td style={{ padding: '5px 8px', textAlign: 'right' }}>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="button"
+                                                                        style={{ fontSize: 10, padding: '2px 8px' }}
+                                                                        disabled={!!err}
+                                                                        onClick={() => setSelectedBatchRank(row.rank)}
+                                                                    >
+                                                                        {isSelected ? '已选中' : '设为回测对象'}
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        )
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div style={{ marginTop: 6, fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+                                            批量回测使用后端单次数据加载 + 单次日历遍历，并按相似阈值自动去重。
+                                        </div>
+                                    </div>
+                                )}
                                 {savedSummaries.length > 0 && (
                                     <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
                                         <div style={{ fontSize: 11, color: '#9db4d8', marginBottom: 6 }}>已保存的回测摘要</div>
@@ -1060,6 +1378,17 @@ export default function FactorMiningPage() {
                                                         {s.weights && Object.keys(s.weights).length > 0 && (
                                                             <span style={{ marginLeft: 4, color: 'rgba(255,255,255,0.4)' }} title={Object.entries(s.weights).map(([k, v]) => `${k}: ${Number(v).toFixed(3)}`).join(' ')}>
                                                                 权重✓
+                                                            </span>
+                                                        )}
+                                                        {Array.isArray(s.factor_profile) && s.factor_profile.length > 0 && (
+                                                            <span
+                                                                style={{ marginLeft: 4, color: 'rgba(126,207,255,0.75)' }}
+                                                                title={s.factor_profile.map((p) => {
+                                                                    const bell = p?.is_bell ? '钟形' : '原始'
+                                                                    return `${p?.name || p?.base_name || ''}: w=${Number(p?.weight || 0).toFixed(3)}, dir=${p?.direction || 'unknown'}, ${bell}`
+                                                                }).join(' | ')}
+                                                            >
+                                                                参数✓
                                                             </span>
                                                         )}
                                                     </span>
@@ -1085,6 +1414,16 @@ export default function FactorMiningPage() {
                                         <div className="errorText">{factorBacktestResult.error}</div>
                                     ) : (
                                         <>
+                                        {(factorBacktestResult.requested_days != null || factorBacktestResult.actual_days != null) && (
+                                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.65)', marginBottom: 8 }}>
+                                                回测区间：请求 {Number(factorBacktestResult.requested_days || backtestDays)} 日，实际 {Number(factorBacktestResult.actual_days || factorBacktestResult.requested_days || backtestDays)} 日
+                                            </div>
+                                        )}
+                                        {factorBacktestResult.warning && (
+                                            <div style={{ fontSize: 11, color: '#ffd080', background: 'rgba(255,200,60,0.1)', padding: '6px 10px', borderRadius: 6, marginBottom: 8, border: '1px solid rgba(255,200,60,0.25)' }}>
+                                                {factorBacktestResult.warning}
+                                            </div>
+                                        )}
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, marginBottom: 8 }}>
                                             {factorBacktestResult.backtest_stats?.total_return != null && <span><span style={{ opacity: 0.7 }}>总收益</span> <strong style={{ color: factorBacktestResult.backtest_stats.total_return > 0 ? '#80e8a0' : '#ff9090' }}>{(Number(factorBacktestResult.backtest_stats.total_return) * 100).toFixed(2)}%</strong></span>}
                                             {factorBacktestResult.backtest_stats?.sharpe_annual != null && <span><span style={{ opacity: 0.7 }}>年化夏普</span> <strong>{Number(factorBacktestResult.backtest_stats.sharpe_annual).toFixed(3)}</strong></span>}

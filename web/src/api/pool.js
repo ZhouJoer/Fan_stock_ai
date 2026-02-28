@@ -54,6 +54,11 @@ export async function availableFactors() {
     return request('/api/pool/available-factors')
 }
 
+/** 数据源检查（akshare + 东方财富） */
+export async function dataSourceCheck() {
+    return request('/api/pool/data-source/check')
+}
+
 export function backtestStop(sessionId) {
     return request('/api/pool/backtest/stop', {
         method: 'POST',
@@ -88,6 +93,11 @@ export async function factorBacktest(body) {
 /** 启动因子回测（后台），返回 session_id，用于连接 stream 获取进度 */
 export async function factorBacktestStart(body) {
     return request('/api/pool/factor-backtest/start', { method: 'POST', body })
+}
+
+/** 批量因子回测（单次加载数据 + 单次日历遍历） */
+export async function factorBacktestBatch(body) {
+    return request('/api/pool/factor-backtest-batch', { method: 'POST', body })
 }
 
 /** 回测摘要：列表 */

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>stock_data.db 健康检查报告</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        body { font-family: "Segoe UI", system-ui, sans-serif; margin: 24px; background: #1a1a2e; color: #eee; }
+        h1 { color: #e94560; }
+        .summary { display: flex; gap: 24px; flex-wrap: wrap; margin: 20px 0; }
+        .card { background: #16213e; padding: 16px 24px; border-radius: 8px; min-width: 160px; }
+        .card .value { font-size: 1.5rem; color: #0f3460; font-weight: bold; }
+        .card.warn .value { color: #e94560; }
+        table { border-collapse: collapse; width: 100%; max-width: 720px; margin: 16px 0; background: #16213e; border-radius: 8px; overflow: hidden; }
+        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #0f3460; }
+        th { background: #0f3460; color: #e94560; }
+        .charts { display: flex; flex-wrap: wrap; gap: 24px; margin: 24px 0; }
+        .chart-wrap { width: 400px; height: 280px; }
+        footer { margin-top: 32px; color: #666; font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <h1>📊 stock_data.db 健康检查报告</h1>
+    <p><strong>数据库路径：</strong> <code>C:\zhouhe\project\Fan_stock_ai\db\stock_data.db</code></p>
+    <div class="summary">
+        <div class="card">
+            <div class="label">数据库大小</div>
+            <div class="value">995.97 MB</div>
+        </div>
+        <div class="card">
+            <div class="label">总行数</div>
+            <div class="value">7,107,525</div>
+        </div>
+        <div class="card ">
+            <div class="label">重复行数</div>
+            <div class="value">0</div>
+        </div>
+        <div class="card">
+            <div class="label">数据表数量</div>
+            <div class="value">6</div>
+        </div>
+    </div>
+    <p><strong>重复检查结论：</strong> 未发现重复行，体积主要来自数据量（如 factor_values 表）。</p>
+
+    <h2>各表统计</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>表名</th>
+                <th>总行数</th>
+                <th>去重行数</th>
+                <th>重复行数</th>
+                <th>重复占比</th>
+                <th>估算大小</th>
+            </tr>
+        </thead>
+        <tbody>
+            
+        <tr>
+            <td>factor_values</td>
+            <td>6,401,976</td>
+            <td>6,401,976</td>
+            <td>0</td>
+            <td>0.0%</td>
+            <td>500154.4 KB</td>
+        </tr>
+        <tr>
+            <td>forward_returns</td>
+            <td>229,565</td>
+            <td>229,565</td>
+            <td>0</td>
+            <td>0.0%</td>
+            <td>17934.8 KB</td>
+        </tr>
+        <tr>
+            <td>kline_sync_state</td>
+            <td>552</td>
+            <td>552</td>
+            <td>0</td>
+            <td>0.0%</td>
+            <td>43.1 KB</td>
+        </tr>
+        <tr>
+            <td>stock_daily</td>
+            <td>426,953</td>
+            <td>426,953</td>
+            <td>0</td>
+            <td>0.0%</td>
+            <td>33355.7 KB</td>
+        </tr>
+        <tr>
+            <td>stock_monthly</td>
+            <td>9,489</td>
+            <td>9,489</td>
+            <td>0</td>
+            <td>0.0%</td>
+            <td>741.3 KB</td>
+        </tr>
+        <tr>
+            <td>stock_weekly</td>
+            <td>38,990</td>
+            <td>38,990</td>
+            <td>0</td>
+            <td>0.0%</td>
+            <td>3046.1 KB</td>
+        </tr>
+        </tbody>
+    </table>
+
+    <h2>可视化</h2>
+    <div class="charts">
+        <div class="chart-wrap">
+            <canvas id="chartRows"></canvas>
+        </div>
+        <div class="chart-wrap">
+            <canvas id="chartDups"></canvas>
+        </div>
+        <div class="chart-wrap">
+            <canvas id="chartPie"></canvas>
+        </div>
+    </div>
+
+    <footer>报告由 tools/db_health_check.py 生成。若存在重复，可运行 <code>python -m tools.db_health_check --fix</code> 去重后使用 VACUUM 收缩文件。</footer>
+
+    <script>
+        const labels = ['factor_values', 'forward_returns', 'kline_sync_state', 'stock_daily', 'stock_monthly', 'stock_weekly'];
+        new Chart(document.getElementById("chartRows"), {
+            type: "bar",
+            data: {
+                labels,
+                datasets: [{ label: "总行数", data: [6401976, 229565, 552, 426953, 9489, 38990], backgroundColor: "#0f3460" }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { title: { display: true, text: "各表行数" } },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+        new Chart(document.getElementById("chartDups"), {
+            type: "bar",
+            data: {
+                labels,
+                datasets: [{ label: "重复行数", data: [0, 0, 0, 0, 0, 0], backgroundColor: "#e94560" }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { title: { display: true, text: "各表重复行数" } },
+                scales: { y: { beginAtZero: true } }
+            }
+        });
+        const pieColors = ["#e94560", "#0f3460", "#533483", "#16c79a", "#f4a261", "#2a9d8f"];
+        new Chart(document.getElementById("chartPie"), {
+            type: "doughnut",
+            data: {
+                labels,
+                datasets: [{ data: [6401976, 229565, 552, 426953, 9489, 38990], backgroundColor: pieColors.slice(0, labels.length) }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { title: { display: true, text: "各表行数占比" } }
+            }
+        });
+    </script>
+</body>
+</html>

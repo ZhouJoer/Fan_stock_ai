@@ -108,9 +108,11 @@ def load_data_node(state: FactorMiningState) -> Dict[str, Any]:
         return out
     data_dict: Dict[str, pd.DataFrame] = {}
     min_rows = 60  # 与 get_stock_data 最低要求一致，便于更多标的通过
+    # 优先使用缓存；仅在缓存非最新时再请求更新（force_refresh_data 仍会先看缓存是否在 CACHE_FRESH_DAYS 内）
+    use_cache = True
     for code in codes:
         try:
-            raw = get_stock_data(code, days, use_cache=True)
+            raw = get_stock_data(code, days, use_cache=use_cache)
             if raw and len(raw) >= min_rows:
                 df = pd.DataFrame(raw)
                 if {"date", "close", "high", "low", "volume"}.issubset(df.columns):
@@ -128,7 +130,7 @@ def load_data_node(state: FactorMiningState) -> Dict[str, Any]:
         )
     benchmark_df = None
     try:
-        raw_b = get_stock_data(benchmark_code, days, use_cache=True)
+        raw_b = get_stock_data(benchmark_code, days, use_cache=use_cache)
         if raw_b and len(raw_b) >= 10:
             benchmark_df = pd.DataFrame(raw_b)
     except Exception:
@@ -406,7 +408,7 @@ def try_combinations_node(state: FactorMiningState) -> Dict[str, Any]:
     if bench_daily is None or (getattr(bench_daily, "empty", True) if bench_daily is not None else True):
         bench_daily = pd.Series(dtype=float)
     rebalance_freq = max(1, state.get("rebalance_freq", 1))
-    max_combos = max(1, min(150, int(state.get("max_combos", 15) or 15)))
+    max_combos = max(1, min(200, int(state.get("max_combos", 15) or 15)))
     print("[factor_mining] try_combinations: 枚举候选组合...", flush=True)
     candidates = _enumerate_factor_combos(factor_names, corr_df, mode, max_combos=max_combos, max_abs_corr=0.6)
     if not candidates:

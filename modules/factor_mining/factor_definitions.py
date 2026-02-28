@@ -191,6 +191,138 @@ def _calc_volume_oscillation(volume: pd.Series, period: int = 20) -> float:
     return float(std_v / mean_v)
 
 
+def _calc_bias(close: pd.Series, period: int) -> float:
+    if close is None or len(close) < period:
+        return 0.0
+    ma = float(close.tail(period).mean())
+    if ma <= 0:
+        return 0.0
+    return float(close.iloc[-1] / ma - 1.0)
+
+
+def _calc_roc(close: pd.Series, period: int) -> float:
+    return _calc_momentum(close, period)
+
+
+def _calc_price_ratio(close: pd.Series, period: int) -> float:
+    if close is None or len(close) < period:
+        return 0.0
+    ma = float(close.tail(period).mean())
+    if ma <= 0:
+        return 0.0
+    return float(close.iloc[-1] / ma - 1.0)
+
+
+def _calc_ema_ratio(close: pd.Series, period: int) -> float:
+    if close is None or len(close) < period:
+        return 0.0
+    ema = close.astype(float).ewm(span=period, adjust=False).mean().iloc[-1]
+    last = float(close.iloc[-1])
+    if ema <= 0:
+        return 0.0
+    return float(last / ema - 1.0)
+
+
+def _calc_trix(close: pd.Series, period: int) -> float:
+    if close is None or len(close) < period * 3:
+        return 0.0
+    s = close.astype(float)
+    ema1 = s.ewm(span=period, adjust=False).mean()
+    ema2 = ema1.ewm(span=period, adjust=False).mean()
+    ema3 = ema2.ewm(span=period, adjust=False).mean()
+    trix = ema3.pct_change()
+    return float(trix.iloc[-1]) if len(trix) and pd.notna(trix.iloc[-1]) else 0.0
+
+
+def _calc_cci(df: pd.DataFrame, period: int = 20) -> float:
+    if df is None or len(df) < period:
+        return 0.0
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    close = df["close"].astype(float)
+    tp = (high + low + close) / 3.0
+    ma = tp.rolling(period).mean()
+    md = (tp - ma).abs().rolling(period).mean()
+    cci = (tp - ma) / (0.015 * md.replace(0, np.nan))
+    last = cci.iloc[-1] if len(cci) else np.nan
+    return float(last) if pd.notna(last) else 0.0
+
+
+def _calc_atr(df: pd.DataFrame, period: int = 14) -> float:
+    if df is None or len(df) < period + 1:
+        return 0.0
+    high = df["high"].astype(float)
+    low = df["low"].astype(float)
+    close = df["close"].astype(float)
+    prev_close = close.shift(1)
+    tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(period).mean()
+    last_atr = atr.iloc[-1] if len(atr) else np.nan
+    last_close = close.iloc[-1] if len(close) else np.nan
+    if pd.isna(last_atr) or pd.isna(last_close) or last_close == 0:
+        return 0.0
+    # 归一化，避免价格量纲干扰
+    return float(last_atr / last_close)
+
+
+def _calc_boll(close: pd.Series, period: int = 20, k: float = 2.0) -> tuple[float, float]:
+    if close is None or len(close) < period:
+        return 0.0, 0.0
+    s = close.astype(float).tail(period)
+    mid = float(s.mean())
+    std = float(s.std()) if len(s) else 0.0
+    if mid <= 0:
+        return 0.0, 0.0
+    upper = mid + k * std
+    lower = max(mid - k * std, 1e-8)
+    last = float(close.iloc[-1])
+    # 使用相对位置，便于横截面比较
+    return float(upper / last - 1.0), float(last / lower - 1.0)
+
+
+def _calc_ret_series(close: pd.Series) -> pd.Series:
+    if close is None or len(close) < 3:
+        return pd.Series(dtype=float)
+    return close.astype(float).pct_change().replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def _calc_variance(ret: pd.Series, period: int) -> float:
+    if ret is None or len(ret) < period:
+        return 0.0
+    r = ret.tail(period)
+    return float(r.var() * 252.0) if len(r) else 0.0
+
+
+def _calc_skewness(ret: pd.Series, period: int) -> float:
+    if ret is None or len(ret) < period:
+        return 0.0
+    v = ret.tail(period).skew()
+    return float(v) if pd.notna(v) else 0.0
+
+
+def _calc_kurtosis(ret: pd.Series, period: int) -> float:
+    if ret is None or len(ret) < period:
+        return 0.0
+    v = ret.tail(period).kurt()
+    return float(v) if pd.notna(v) else 0.0
+
+
+def _calc_sharpe(ret: pd.Series, period: int) -> float:
+    if ret is None or len(ret) < period:
+        return 0.0
+    r = ret.tail(period)
+    std = float(r.std()) if len(r) else 0.0
+    if std <= 0:
+        return 0.0
+    return float(np.sqrt(252.0) * r.mean() / std)
+
+
+def _calc_vol_ma(volume: pd.Series, period: int) -> float:
+    if volume is None or len(volume) < period:
+        return 0.0
+    return float(volume.astype(float).tail(period).mean())
+
+
 def build_factor_values(
     df: pd.DataFrame,
     extra_factors: Optional[Dict[str, float]] = None,
@@ -198,14 +330,60 @@ def build_factor_values(
     """从 OHLCV 计算因子。extra_factors 可传入截面数据（如 pe_ratio、turnover_ratio）由调用方 join。"""
     close = df["close"].astype(float)
     volume = df["volume"].astype(float) if "volume" in df.columns else pd.Series(dtype=float)
+    ret = _calc_ret_series(close)
+    boll_up, boll_down = _calc_boll(close, 20, 2.0)
 
     out = {
         "momentum_20": _calc_momentum(close, 20),
         "momentum_60": _calc_momentum(close, 60),
+        "ema5": _calc_ema_ratio(close, 5),
+        "ema10": _calc_ema_ratio(close, 10),
+        "ema12": _calc_ema_ratio(close, 12),
+        "ema20": _calc_ema_ratio(close, 20),
+        "ema26": _calc_ema_ratio(close, 26),
+        "ema120": _calc_ema_ratio(close, 120),
+        "bias5": _calc_bias(close, 5),
+        "bias10": _calc_bias(close, 10),
+        "bias20": _calc_bias(close, 20),
+        "bias60": _calc_bias(close, 60),
+        "roc6": _calc_roc(close, 6),
+        "roc12": _calc_roc(close, 12),
+        "roc60": _calc_roc(close, 60),
+        "roc120": _calc_roc(close, 120),
+        "price1m": _calc_price_ratio(close, 20),
+        "price3m": _calc_price_ratio(close, 60),
+        "price1y": _calc_price_ratio(close, 240),
+        "trix5": _calc_trix(close, 5),
+        "trix10": _calc_trix(close, 10),
+        "cci20": _calc_cci(df, 20),
         "trend_strength": _calc_trend_strength(close, 20),
         "low_volatility": _calc_low_volatility(close, 20),
+        "variance20": _calc_variance(ret, 20),
+        "variance60": _calc_variance(ret, 60),
+        "variance120": _calc_variance(ret, 120),
+        "skewness_20": _calc_skewness(ret, 20),
+        "skewness_60": _calc_skewness(ret, 60),
+        "skewness_120": _calc_skewness(ret, 120),
+        "kurtosis_20": _calc_kurtosis(ret, 20),
+        "kurtosis_60": _calc_kurtosis(ret, 60),
+        "kurtosis_120": _calc_kurtosis(ret, 120),
+        "sharpe_ratio_20": _calc_sharpe(ret, 20),
+        "sharpe_ratio_60": _calc_sharpe(ret, 60),
+        "sharpe_ratio_120": _calc_sharpe(ret, 120),
+        "boll_up": boll_up,
+        "boll_down": boll_down,
+        "atr6": _calc_atr(df, 6),
+        "atr14": _calc_atr(df, 14),
         "volume_surge": _calc_volume_surge(volume, 20),
         "turnover_proxy": _calc_turnover_proxy(volume, 5),
+        "vol5": _calc_vol_ma(volume, 5),
+        "vol10": _calc_vol_ma(volume, 10),
+        "vol20": _calc_vol_ma(volume, 20),
+        "vol60": _calc_vol_ma(volume, 60),
+        "vol120": _calc_vol_ma(volume, 120),
+        "vol240": _calc_vol_ma(volume, 240),
+        "vroc6": _calc_roc(volume, 6),
+        "vroc12": _calc_roc(volume, 12),
         "short_reversal": _calc_short_reversal(close, 5),
         "intraday_amplitude": _calc_intraday_amplitude(df, 10),
         "rsi": _calc_rsi(close, 14),

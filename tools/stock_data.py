@@ -2,11 +2,34 @@
 股票数据获取模块
 提供股票数据的获取、缓存和转换功能
 """
+import time
 import akshare as ak
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from db.manager import save_daily_data, get_cached_history, get_latest_date, count_cached_data
 from tools.stock_name_code_map import get_code_by_name, set_mapping
+from tools.data_sources import (
+    fetch_stock_hist_akshare,
+    fetch_stock_hist_baostock,
+    fetch_stock_hist_by_source,
+    get_stock_source_priority,
+    set_stock_source_priority,
+    mark_source_unavailable,
+    clear_source_unavailable,
+    is_source_available,
+)
+
+# 缓存视为「最新」的天数：在此期限内优先用缓存，不请求网络；超过则尝试更新
+CACHE_FRESH_DAYS = 5
+# 连续请求 akshare 的最小间隔（秒），减轻数据源限流/断开（RemoteDisconnected）
+AKSHARE_REQUEST_INTERVAL = 2.5
+_last_akshare_request_time: float = 0
+# 连续网络失败后进入冷却期：冷却期内若有缓存则直接使用，避免每只都重试拖慢体验
+DATA_SOURCE_COOLDOWN_SECONDS = 300
+FAILS_TO_GLOBAL_CACHE = 5
+_data_source_cooldown_until: float = 0
+_data_source_fail_streak: int = 0
 
 
 def get_stock_code_from_name(stock_input):
@@ -91,6 +114,20 @@ def _convert_cache_to_list(df_cache):
     return stock_data
 
 
+def _ensure_pct_chg_column(df: pd.DataFrame) -> pd.DataFrame:
+    """确保存在“涨跌幅”列（百分比），兼容各数据源列差异。"""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    if "涨跌幅" not in out.columns:
+        out["涨跌幅"] = np.nan
+    out["涨跌幅"] = pd.to_numeric(out["涨跌幅"], errors="coerce")
+    if out["涨跌幅"].isna().all() and "收盘" in out.columns:
+        close = pd.to_numeric(out["收盘"], errors="coerce")
+        out["涨跌幅"] = close.pct_change().fillna(0.0) * 100.0
+    return out
+
+
 def _is_etf_code(code: str) -> bool:
     """
     判断是否为ETF代码
@@ -130,15 +167,16 @@ def _get_etf_market_suffix(code: str) -> str:
 def fetch_stock_data(stock_code, days=120, use_cache=True):
     """
     从 akshare 获取真实股票数据，支持数据库缓存
-    
+
     参数：
         stock_code: 股票代码或名称，如 "600000.SH"、"600000" 或 "东方电气"
         days: 需要获取的「交易日」数量（K 线根数），非日历天
         use_cache: 是否使用缓存
-    
+
     返回：
         包含 OHLCV 数据的列表，失败时抛出异常
     """
+    global _last_akshare_request_time, _data_source_cooldown_until, _data_source_fail_streak
     # 将股票名称转换为代码
     symbol = get_stock_code_from_name(stock_code)
     
@@ -147,25 +185,33 @@ def fetch_stock_data(stock_code, days=120, use_cache=True):
     
     try:
         need_fetch = True
-        
-        if use_cache:
-            # 先检查缓存：条数足够则优先使用缓存，不再请求网络（与因子挖掘等模块一致，减少网络失败）
-            latest_db_date = get_latest_date(symbol)
-            cached_count = count_cached_data(symbol)
-            if latest_db_date and cached_count >= days:
-                try:
-                    latest_dt = datetime.strptime(str(latest_db_date)[:10], "%Y-%m-%d").date()
-                    today = datetime.now().date()
-                    days_ago = (today - latest_dt).days
-                    # 最新一条在 15 个日历日内视为可用缓存（与因子挖掘一致：周末/节假日/限流时少打网络）
-                    if days_ago <= 15:
-                        need_fetch = False
-                        print(f"[Data] ✓ 使用缓存 {symbol}（最新：{latest_db_date}，共{cached_count}条）")
-                except Exception:
-                    pass
-            if need_fetch and latest_db_date and cached_count < days:
-                print(f"[Data] 缓存数据不足 {symbol}，需要{days}条，缓存{cached_count}条，将请求网络")
-        
+        latest_db_date = get_latest_date(symbol)
+        cached_count = count_cached_data(symbol)
+
+        # 始终先看缓存：条数足够且在「最新」期限内则直接用缓存，不请求网络
+        if latest_db_date and cached_count >= days:
+            try:
+                latest_dt = datetime.strptime(str(latest_db_date)[:10], "%Y-%m-%d").date()
+                today = datetime.now().date()
+                days_ago = (today - latest_dt).days
+                if days_ago <= CACHE_FRESH_DAYS:
+                    need_fetch = False
+                    print(f"[Data] ✓ 使用缓存 {symbol}（最新：{latest_db_date}，共{cached_count}条）")
+                    return _convert_cache_to_list(get_cached_history(symbol, limit=days))
+            except Exception:
+                pass
+        if need_fetch and latest_db_date and cached_count < days:
+            print(f"[Data] 缓存数据不足 {symbol}，需要{days}条，缓存{cached_count}条，将请求网络")
+        elif need_fetch and latest_db_date and cached_count >= days:
+            print(f"[Data] 缓存非最新 {symbol}（最新：{latest_db_date}），将请求网络更新")
+
+        # 若已切换到全局缓存模式且本地缓存可用，直接使用缓存，避免每只股票都触发网络重试
+        now_ts = time.time()
+        if need_fetch and cached_count >= 60 and now_ts < _data_source_cooldown_until:
+            remain = int(_data_source_cooldown_until - now_ts)
+            print(f"[Data] 全局缓存模式中（约{remain}s），直接使用缓存 {symbol}")
+            return _convert_cache_to_list(get_cached_history(symbol, limit=days))
+
         if need_fetch:
             # 日期范围：入参 days 为「交易日」数，换算为日历天（252 交易日/年 ≈ 365 天）
             # 使用 1.5 倍 + 60 天缓冲，避免数据源单次条数限制或区间边界导致不足
@@ -173,23 +219,24 @@ def fetch_stock_data(stock_code, days=120, use_cache=True):
             end_date = datetime.now().strftime("%Y%m%d")
             start_date = (datetime.now() - timedelta(days=calendar_days)).strftime("%Y%m%d")
             
-            print(f"[Data] 从 akshare 获取 {symbol}（{days}交易日≈{calendar_days}日历天，{'ETF' if is_etf else '股票'}）...")
+            print(f"[Data] 获取 {symbol}（{days}交易日≈{calendar_days}日历天，{'ETF' if is_etf else '股票'}）...")
             
             df = None
             
             # ETF需要使用专用接口（网络不稳定时重试）
             if is_etf:
                 print(f"[Data] 检测到ETF代码，使用ETF专用接口...")
-                
+                now = time.time()
+                if _last_akshare_request_time > 0 and now - _last_akshare_request_time < AKSHARE_REQUEST_INTERVAL:
+                    time.sleep(AKSHARE_REQUEST_INTERVAL - (now - _last_akshare_request_time))
+                _last_akshare_request_time = time.time()
                 df = None
                 last_error = None
                 _max_etf_retries = 2  # 连接断开时重试次数
-                
                 for _etf_retry in range(_max_etf_retries):
                     if df is not None and not df.empty:
                         break
                     if _etf_retry > 0:
-                        import time
                         time.sleep(2)  # 重试前等待 2 秒
                         print(f"[Data] ETF 数据获取重试 {_etf_retry}/{_max_etf_retries - 1}...")
                 
@@ -254,13 +301,7 @@ def fetch_stock_data(stock_code, days=120, use_cache=True):
                 # 方法3: 如果前两个都失败，尝试普通股票接口（某些ETF可能也能用）
                 if df is None or df.empty:
                     try:
-                        df = ak.stock_zh_a_hist(
-                            symbol=symbol, 
-                            period="daily", 
-                            start_date=start_date, 
-                            end_date=end_date, 
-                            adjust="qfq"
-                        )
+                        df = fetch_stock_hist_akshare(symbol, start_date, end_date, adjust="qfq")
                         if df is not None and not df.empty:
                             print(f"[Data] 使用stock_zh_a_hist接口获取ETF数据成功，{len(df)}条")
                     except Exception as e3:
@@ -271,30 +312,59 @@ def fetch_stock_data(stock_code, days=120, use_cache=True):
                 if df is None or df.empty:
                     raise ValueError(f"所有ETF接口都失败，最后错误: {last_error}")
             else:
-                # 普通股票 - 添加重试机制（指数退避）
+                # 普通股票 - 重试间隔拉长，给数据源恢复时间（RemoteDisconnected 后常需 10s+）
                 max_retries = 3
-                base_delay = 3  # 基础延迟3秒
+                base_delay = 5  # 第1次重试前 5s，第2次 10s
                 df = None
                 last_error = None
-                
+                source_priority = get_stock_source_priority()
+                used_source = ""
+                print(f"[Data] 数据源优先级: {source_priority}")
+
                 for retry in range(max_retries):
                     try:
-                        # 在重试前添加延迟（指数退避：3秒、6秒、12秒）
+                        # 连续请求间隔，降低被数据源限流概率
+                        now = time.time()
+                        if _last_akshare_request_time > 0 and now - _last_akshare_request_time < AKSHARE_REQUEST_INTERVAL:
+                            wait = AKSHARE_REQUEST_INTERVAL - (now - _last_akshare_request_time)
+                            time.sleep(wait)
                         if retry > 0:
                             delay = base_delay * (2 ** (retry - 1))
                             print(f"[Data] 等待 {delay} 秒后重试...")
-                            import time
                             time.sleep(delay)
-                        
-                        df = ak.stock_zh_a_hist(
-                            symbol=symbol, 
-                            period="daily", 
-                            start_date=start_date, 
-                            end_date=end_date, 
-                            adjust="qfq"  # 前复权
-                        )
+
+                        df = None
+                        source_errors = []
+                        for source in source_priority:
+                            if not is_source_available(source):
+                                continue
+                            try:
+                                if source == "akshare":
+                                    # 仅 akshare 受限流间隔控制
+                                    now2 = time.time()
+                                    if _last_akshare_request_time > 0 and now2 - _last_akshare_request_time < AKSHARE_REQUEST_INTERVAL:
+                                        time.sleep(AKSHARE_REQUEST_INTERVAL - (now2 - _last_akshare_request_time))
+                                df_try = fetch_stock_hist_by_source(source, symbol, start_date, end_date, adjust="qfq")
+                                if source == "akshare":
+                                    _last_akshare_request_time = time.time()
+                                if df_try is not None and not df_try.empty:
+                                    df = df_try
+                                    used_source = source
+                                    clear_source_unavailable(source)
+                                    break
+                            except Exception as se:
+                                msg = str(se)
+                                if source == "akshare" and ("Connection" in msg or "Remote" in msg or "timeout" in msg.lower() or "refused" in msg.lower()):
+                                    # akshare 不通时临时禁用并降级为 baostock 优先，避免一直尝试 akshare
+                                    mark_source_unavailable("akshare", cooldown_seconds=600)
+                                    set_stock_source_priority(["baostock", "akshare"])
+                                source_errors.append(f"{source}:{type(se).__name__}:{str(se)[:120]}")
+                        if df is None or df.empty:
+                            raise RuntimeError("; ".join(source_errors) if source_errors else "所有数据源均返回空")
                         if df is not None and not df.empty:
-                            print(f"[Data] ✓ {symbol} 获取成功（第{retry+1}次尝试）")
+                            _data_source_fail_streak = 0
+                            _data_source_cooldown_until = 0
+                            print(f"[Data] ✓ {symbol} 获取成功（第{retry+1}次尝试，source={used_source or 'unknown'}）")
                             # 便于排查不足：打印本次返回条数与日期区间
                             _date_col = "日期" if "日期" in df.columns else (df.columns[0] if len(df.columns) else None)
                             if _date_col is not None:
@@ -307,7 +377,16 @@ def fetch_stock_data(stock_code, days=120, use_cache=True):
                                     _min_dt = pd.to_datetime(df[_date_col].min())
                                     _start_earlier = (_min_dt - timedelta(days=min(400, (days - len(df)) * 2))).strftime("%Y%m%d")
                                     _end_earlier = (_min_dt - timedelta(days=1)).strftime("%Y%m%d")
-                                    df2 = ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=_start_earlier, end_date=_end_earlier, adjust="qfq")
+                                    # 先用本次成功源补拉，再按优先级尝试其他源
+                                    df2 = pd.DataFrame()
+                                    preferred_sources = ([used_source] + [s for s in source_priority if s != used_source]) if used_source else source_priority
+                                    for src2 in preferred_sources:
+                                        try:
+                                            df2 = fetch_stock_hist_by_source(src2, symbol, _start_earlier, _end_earlier, adjust="qfq")
+                                            if df2 is not None and not df2.empty:
+                                                break
+                                        except Exception:
+                                            continue
                                     if df2 is not None and not df2.empty:
                                         df = pd.concat([df2, df], ignore_index=True)
                                         df = df.drop_duplicates(subset=[_date_col], keep="last").sort_values(_date_col).reset_index(drop=True)
@@ -320,8 +399,12 @@ def fetch_stock_data(stock_code, days=120, use_cache=True):
                     except Exception as e:
                         last_error = e
                         error_msg = str(e)
-                        # 判断错误类型
-                        if 'Connection' in error_msg or 'Remote' in error_msg:
+                        # 打印真实异常，便于排查（限流/连接重置/超时等）
+                        print(f"[Data] 请求异常 {type(e).__name__}: {error_msg[:200]}")
+                        if "RemoteDisconnected" in error_msg or "Connection aborted" in error_msg:
+                            print(f"[Data] 提示：数据源主动断开多为限流，重试间隔已拉长；失败后将自动用缓存")
+                        is_network_error = ('Connection' in error_msg or 'Remote' in error_msg or 'refused' in error_msg.lower() or 'timeout' in error_msg.lower())
+                        if 'Connection' in error_msg or 'Remote' in error_msg or 'refused' in error_msg.lower():
                             error_type = "网络连接错误"
                         elif 'timeout' in error_msg.lower():
                             error_type = "请求超时"
@@ -329,11 +412,17 @@ def fetch_stock_data(stock_code, days=120, use_cache=True):
                             error_type = "请求限流"
                         else:
                             error_type = "未知错误"
-                        
                         if retry < max_retries - 1:
                             print(f"[Data] ⚠ 第{retry+1}次获取 {symbol} 失败（{error_type}），将重试...")
                         else:
                             print(f"[Data] ✗ {symbol} 重试{max_retries}次后仍失败（{error_type}）")
+                        if is_network_error:
+                            _data_source_fail_streak += 1
+                            if _data_source_fail_streak >= FAILS_TO_GLOBAL_CACHE:
+                                _data_source_cooldown_until = time.time() + DATA_SOURCE_COOLDOWN_SECONDS
+                                print(
+                                    f"[Data] 连续失败 {_data_source_fail_streak} 次，切换全局缓存 {DATA_SOURCE_COOLDOWN_SECONDS}s"
+                                )
                 
                 # 如果所有重试都失败，尝试使用缓存
                 if df is None or df.empty:
@@ -365,6 +454,7 @@ def fetch_stock_data(stock_code, days=120, use_cache=True):
                 raise ValueError(f"无法获取{'ETF' if is_etf else '股票'} {symbol} 的数据")
             
             # 保存到数据库
+            df = _ensure_pct_chg_column(df)
             save_daily_data(symbol, df)
             print(f"[Data] 数据已缓存到数据库，共 {len(df)} 条")
         

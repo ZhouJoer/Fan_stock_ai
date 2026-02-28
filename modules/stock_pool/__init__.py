@@ -373,6 +373,13 @@ def filter_stock_universe(
         if code_to_mv is None:
             code_to_mv = {}
     threshold = float(small_cap_threshold_billion) * 1e8
+    # 若请求了市值过滤但未拿到市值映射（常见于行情接口短时失败），不要把股票池误筛成 0
+    cap_filter_enabled = cap_scope in ("only_small_cap", "exclude_small_cap") and bool(code_to_mv)
+    if cap_scope in ("only_small_cap", "exclude_small_cap") and not cap_filter_enabled:
+        try:
+            print(f"[选股] 市值过滤降级为 none：未获取到总市值映射（cap_scope={cap_scope}）")
+        except Exception:
+            pass
     for c in codes:
         code = str(c).strip().zfill(6)
         if len(code) != 6:
@@ -383,13 +390,17 @@ def filter_stock_universe(
             name = code_to_name.get(code) or code_to_name.get(c, "")
             if _is_st_name(name):
                 continue
-        if cap_scope == "only_small_cap":
-            mv = code_to_mv.get(code) or code_to_mv.get(c, 0)
-            if mv >= threshold:
+        if cap_filter_enabled and cap_scope == "only_small_cap":
+            mv = code_to_mv.get(code)
+            if mv is None:
+                mv = code_to_mv.get(c)
+            if mv is not None and mv >= threshold:
                 continue
-        elif cap_scope == "exclude_small_cap":
-            mv = code_to_mv.get(code) or code_to_mv.get(c, 0)
-            if mv < threshold:
+        elif cap_filter_enabled and cap_scope == "exclude_small_cap":
+            mv = code_to_mv.get(code)
+            if mv is None:
+                mv = code_to_mv.get(c)
+            if mv is not None and mv < threshold:
                 continue
         out.append(code)
     return out
@@ -572,40 +583,39 @@ def get_index_constituents(
     small_cap_threshold_billion: float = 30.0,
 ) -> List[str]:
     """
-    获取指数当前成分股代码列表（akshare），并做选股过滤：排除 ST/*ST/北交所，可选市值范围。
+    获取指数当前成分股代码列表（akshare index_stock_cons_csindex），并做选股过滤。
     
-    index_code 如 "000300"（沪深300）、"000016"（上证50）。
+    index_code 如 "000300"（沪深300）、"000016"（上证50）。接口要求 6 位指数代码。
     cap_scope: "none" | "only_small_cap" | "exclude_small_cap"
     
     返回:
-        6 位股票代码列表
+        6 位股票代码列表。失败时打印异常并返回 []，便于排查 akshare 版本或网络问题。
     """
     symbol = str(index_code).strip()
+    if symbol.isdigit():
+        symbol = symbol.zfill(6)
     codes: List[str] = []
-    for fn, sym in [
-        (ak.index_stock_cons_csindex, symbol),
-        (ak.index_stock_cons, symbol),
-    ]:
-        try:
-            df = fn(symbol=sym)
-            if df is not None and not df.empty:
-                col = None
-                for c in ("品种代码", "成分券代码", "成分代码", "code", "代码"):
-                    if c in df.columns:
-                        col = c
-                        break
-                if col is None and len(df.columns) > 0:
-                    col = df.columns[0]
-                if col:
-                    codes = [c for c in df[col].astype(str).str.replace(r"\D", "", regex=True).str[-6:].tolist() if len(c) == 6]
-                    break
-        except Exception:
-            continue
+    try:
+        df = ak.index_stock_cons_csindex(symbol=symbol)
+        if df is None or df.empty:
+            print(f"[选股] 获取指数 {index_code} 成分为空（接口返回空 DataFrame）")
+            return []
+        col = None
+        for c in ("成分券代码", "品种代码", "成分代码", "code", "代码"):
+            if c in df.columns:
+                col = c
+                break
+        if col is None:
+            col = df.columns[0]
+        codes = [
+            c for c in df[col].astype(str).str.replace(r"\D", "", regex=True).str[-6:].tolist()
+            if c and len(c) == 6
+        ]
+    except Exception as e:
+        print(f"[选股] 获取指数 {index_code} 成分失败: {e}")
+        return []
     if not codes:
-        try:
-            print(f"[选股] 获取指数 {index_code} 成分失败")
-        except Exception:
-            pass
+        print(f"[选股] 获取指数 {index_code} 成分解析后为空（请检查 akshare 版本与列名）")
         return []
     return filter_stock_universe(codes, cap_scope=cap_scope, small_cap_threshold_billion=small_cap_threshold_billion)
 

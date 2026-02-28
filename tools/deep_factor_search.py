@@ -42,6 +42,7 @@ from modules.factor_mining.factor_eval import (
     generate_backtest_chart,
     run_backtest,
     run_backtest_detailed,
+    run_backtest_detailed_multi,
     suggest_bell_from_quantile_returns,
 )
 from modules.factor_mining.factor_trainer import (
@@ -561,6 +562,7 @@ def _fallback_orchestration(
     factor_names: List[str],
     quality_per_factor: Dict[str, Any],
     corr_df: Optional[pd.DataFrame],
+    min_factors: int,
     max_factors: int,
     n_trials: int,
 ) -> List[Dict[str, Any]]:
@@ -591,8 +593,10 @@ def _fallback_orchestration(
 
     combos: List[Dict[str, Any]] = []
     seen: set = set()
-    # 对每个“主因子”，尝试多种组合规模（1 到 max_factors），以凑足 n_trials
-    for size in range(1, max_factors + 1):
+    min_factors = max(1, int(min_factors or 1))
+    max_factors = max(min_factors, int(max_factors or min_factors))
+    # 对每个“主因子”，尝试多种组合规模（min_factors 到 max_factors），以凑足 n_trials
+    for size in range(min_factors, max_factors + 1):
         for main in sorted_factors:
             if len(combos) >= n_trials:
                 break
@@ -622,6 +626,8 @@ def _fallback_orchestration(
                 break
             if f not in selected and low_corr_with(f, selected):
                 selected.append(f)
+        if len(selected) < min_factors:
+            selected = (selected + [f for f in sorted_factors if f not in selected])[:min_factors]
         key = tuple(sorted(selected))
         if key not in seen:
             seen.add(key)
@@ -644,6 +650,7 @@ def _run_orchestration_agent(
     解析失败时回退到系统规划。
     """
     fn_set = set(factor_names)
+    min_factors = {"single": 1, "dual": 2, "multi": 3}.get(str(factor_mode).strip().lower(), 1)
 
     # 高相关因子对（|r| ≥ 0.4）
     high_corr_parts: List[str] = []
@@ -684,6 +691,8 @@ def _run_orchestration_agent(
                 if not factors:
                     continue
                 factors = factors[:max_factors]
+                if len(factors) < min_factors:
+                    continue
                 key = tuple(sorted(factors))
                 if key in seen:
                     continue
@@ -694,7 +703,7 @@ def _run_orchestration_agent(
                 # 若不足 n_trials，用回退补充
                 if len(valid) < n_trials:
                     fallback = _fallback_orchestration(
-                        factor_names, quality_per_factor, corr_df, max_factors, n_trials - len(valid)
+                        factor_names, quality_per_factor, corr_df, min_factors, max_factors, n_trials - len(valid)
                     )
                     exist_keys = {tuple(sorted(v["factors"])) for v in valid}
                     for fb in fallback:
@@ -708,7 +717,7 @@ def _run_orchestration_agent(
     except Exception as e:
         print(f"[orchestration] Agent 调用失败: {e}，使用系统规划", flush=True)
 
-    return _fallback_orchestration(factor_names, quality_per_factor, corr_df, max_factors, n_trials)
+    return _fallback_orchestration(factor_names, quality_per_factor, corr_df, min_factors, max_factors, n_trials)
 
 
 def _apply_reviewer_verdict_rules(
@@ -1009,7 +1018,7 @@ def _run_agent_driven_search(
     n_trials = getattr(args, "n_trials", None)
     if n_trials is None or (isinstance(n_trials, (int, float)) and int(n_trials) <= 0):
         n_trials = {"single": 6, "dual": 10, "multi": 8}.get(factor_mode, 6)
-    n_trials = max(1, min(int(n_trials), 150))
+    n_trials = max(1, min(int(n_trials), 200))
 
     # ── 1. 编排 Agent：规划因子组合方案 ──
     if progress_callback:
@@ -1303,7 +1312,7 @@ def run_factor_backtest_only(
     codes = _resolve_universe(args)
     # 指数模式下若成分股获取失败，尝试用 000300 / 000016 再解析
     if len(codes) < 8 and universe_source == "index":
-        print(f"[backtest] 指数 {universe_index} 成分股获取结果: {len(codes)} 只", flush=True)
+        print(f"[backtest] 指数 {universe_index} 成分股获取结果: {len(codes)} 只 (cap_scope={getattr(args, 'cap_scope', 'none')})", flush=True)
         if universe_index != "000300":
             args.universe_index = "000300"
             codes = _resolve_universe(args)
@@ -1417,7 +1426,15 @@ def run_factor_backtest_only(
                 label_horizon=label_horizon,
             )
             if loaded is not None and len(loaded) >= 80 and all(f in loaded.columns for f in base_names):
-                factor_df_raw = loaded
+                loaded_days = int(loaded["date"].drop_duplicates().shape[0]) if "date" in loaded.columns else 0
+                # 仅回测优先保证“请求天数”覆盖：数据库样本不足时，回退为基于最新行情重建，避免 3 年请求仅命中 1 年旧样本
+                if loaded_days >= int(days):
+                    factor_df_raw = loaded
+                else:
+                    print(
+                        f"[backtest] 因子库样本仅 {loaded_days} 日，低于请求 {int(days)} 日，改为基于最新行情重建样本",
+                        flush=True,
+                    )
         except Exception as _e:
             pass
     if factor_df_raw is None or factor_df_raw.empty:
@@ -1461,6 +1478,7 @@ def run_factor_backtest_only(
         }
     # 仅使用最近 days 个交易日，使回测与图表与用户选择的回测天数一致（如 3 年=756 日）
     unique_dates = factor_df["date"].drop_duplicates().sort_values()
+    available_days = int(len(unique_dates))
     if len(unique_dates) > days:
         last_dates = set(unique_dates.iloc[-int(days) :].tolist())
         factor_df = factor_df[factor_df["date"].isin(last_dates)].copy()
@@ -1520,6 +1538,9 @@ def run_factor_backtest_only(
     weights_out = {f: float(weights_dict.get(f, 0.0)) for f in factor_combo}
     out = {
         "error": None,
+        "requested_days": int(days),
+        "available_days": int(available_days),
+        "actual_days": int(min(days, available_days)),
         "factor_combo": factor_combo,
         "weights": weights_out,
         "alpha": ab.get("alpha"),
@@ -1530,6 +1551,11 @@ def run_factor_backtest_only(
         "rebalance_details": rb_details,
         "chart_base64": chart_b64,
     }
+    if available_days < int(days):
+        out["warning"] = (
+            f"可用历史仅 {available_days} 个交易日，低于请求的 {int(days)}。"
+            "本次按可用数据区间回测（常见于缓存不足或数据源拉取失败）。"
+        )
     # 稳健性检查：同一数据下多组 (TopN, 调仓周期) 回测，评估参数敏感性
     if params.get("robustness_check"):
         param_sets = [(top_n, rebalance_freq), (5, 1), (5, 8), (10, 5), (15, 1)]
@@ -1569,6 +1595,538 @@ def run_factor_backtest_only(
     return out
 
 
+def _factor_base_set(factor_combo: List[str]) -> set:
+    return {str(f).strip().replace("_bell", "") for f in (factor_combo or []) if str(f).strip()}
+
+
+def _filter_similar_combos(
+    combo_items: List[Dict[str, Any]],
+    similarity_threshold: float = 0.8,
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    去重 + 相似度过滤。
+    相似度定义为 |A∩B| / min(|A|,|B|)，可过滤“几乎是同一套因子”的组合。
+    """
+    kept: List[Dict[str, Any]] = []
+    dropped: List[Dict[str, Any]] = []
+    seen_exact = set()
+    th = float(similarity_threshold or 0.8)
+    th = min(0.99, max(0.5, th))
+    for item in combo_items:
+        combo = item.get("factor_combo") or []
+        key = tuple(sorted(str(x).strip() for x in combo if str(x).strip()))
+        if not key:
+            dropped.append({**item, "drop_reason": "空组合"})
+            continue
+        if key in seen_exact:
+            dropped.append({**item, "drop_reason": "完全重复"})
+            continue
+        base = _factor_base_set(combo)
+        is_similar = False
+        for k in kept:
+            other = _factor_base_set(k.get("factor_combo") or [])
+            if not base or not other:
+                continue
+            sim = len(base.intersection(other)) / float(max(1, min(len(base), len(other))))
+            if sim >= th:
+                dropped.append({**item, "drop_reason": f"与已选组合相似度过高(sim={sim:.2f})"})
+                is_similar = True
+                break
+        if is_similar:
+            continue
+        seen_exact.add(key)
+        kept.append(item)
+    return kept, dropped
+
+
+def run_factor_backtest_batch(params: dict) -> Dict[str, Any]:
+    """
+    批量回测：一次加载样本，一次遍历回测日历，同时评估多组组合。
+    """
+    raw_items = params.get("factor_combos") or []
+    if not isinstance(raw_items, list) or not raw_items:
+        return {"error": "缺少 factor_combos（组合列表）", "results": []}
+
+    combo_items: List[Dict[str, Any]] = []
+    for idx, raw in enumerate(raw_items):
+        if isinstance(raw, dict):
+            combo = raw.get("factor_combo") or raw.get("best_factor_combo") or []
+            lw = raw.get("learned_weights")
+            if isinstance(lw, dict) and isinstance(lw.get("flat"), dict):
+                weights = lw.get("flat") or {}
+            else:
+                weights = raw.get("weights") or {}
+            combo_items.append({
+                "rank": int(raw.get("rank", idx + 1)),
+                "factor_combo": list(combo or []),
+                "weights": weights if isinstance(weights, dict) else {},
+                "factor_quality": raw.get("factor_quality") or {},
+            })
+        elif isinstance(raw, list):
+            combo_items.append({"rank": idx + 1, "factor_combo": list(raw), "weights": {}, "factor_quality": {}})
+
+    sim_th = float(params.get("similarity_threshold", 0.8) or 0.8)
+    max_combos = max(1, min(int(params.get("max_combos", 20) or 20), 50))
+    auto_relax_similarity = bool(params.get("auto_relax_similarity", True))
+    relax_step = float(params.get("similarity_relax_step", 0.05) or 0.05)
+    relax_max = float(params.get("similarity_relax_max", 0.99) or 0.99)
+    relax_step = min(0.2, max(0.01, relax_step))
+    relax_max = min(0.99, max(0.5, relax_max))
+
+    filtered, dropped = _filter_similar_combos(combo_items, similarity_threshold=sim_th)
+    used_sim_th = float(min(0.99, max(0.5, sim_th)))
+    relax_trace: List[Dict[str, Any]] = [{"threshold": round(used_sim_th, 3), "kept": len(filtered)}]
+    if auto_relax_similarity and len(filtered) < max_combos:
+        th = used_sim_th
+        best_filtered = filtered
+        best_dropped = dropped
+        while th < relax_max and len(best_filtered) < max_combos:
+            th = min(relax_max, th + relax_step)
+            cand_filtered, cand_dropped = _filter_similar_combos(combo_items, similarity_threshold=th)
+            relax_trace.append({"threshold": round(float(th), 3), "kept": len(cand_filtered)})
+            if len(cand_filtered) > len(best_filtered):
+                best_filtered = cand_filtered
+                best_dropped = cand_dropped
+                used_sim_th = float(th)
+            if len(best_filtered) >= max_combos:
+                break
+        filtered, dropped = best_filtered, best_dropped
+
+    filtered = filtered[:max_combos]
+    if not filtered:
+        return {"error": "过滤后无可回测组合（可能均被判定为重复/相似）", "results": [], "filtered_out": dropped}
+
+    industry_list_raw = params.get("industry_list")
+    if isinstance(industry_list_raw, list):
+        industry_list_str = ",".join(str(x).strip() for x in industry_list_raw if x)
+    else:
+        industry_list_str = str(industry_list_raw or "")
+    stocks_raw = params.get("stocks")
+    if isinstance(stocks_raw, list):
+        stocks_str = ",".join(str(x).strip() for x in stocks_raw if x)
+    else:
+        stocks_str = str(stocks_raw or "")
+    universe_source = str(params.get("universe_source", "manual")).strip() or "manual"
+    universe_index = str(params.get("universe_index", "")).strip()
+    if universe_source == "index" and not universe_index:
+        universe_index = "000300"
+    args = SimpleNamespace(
+        universe_source=universe_source,
+        universe_index=universe_index,
+        industry_list=industry_list_str,
+        leaders_per_industry=max(1, int(params.get("leaders_per_industry", 1))),
+        stocks=stocks_str,
+        max_stocks=int(params.get("max_stocks", 60)),
+        days=int(params.get("days", 252)),
+        exclude_kechuang=bool(params.get("exclude_kechuang", False)),
+        exclude_small_cap=bool(params.get("exclude_small_cap", False)),
+        small_cap_max_billion=float(params.get("small_cap_max_billion", params.get("small_cap_threshold_billion", 30))),
+        cap_scope=str(params.get("cap_scope", "none") or "none"),
+        benchmark_code=str(params.get("benchmark_code", "510300") or "510300"),
+    )
+    codes = _resolve_universe(args)
+    if len(codes) < 8:
+        return {"error": f"有效股票池过少: {len(codes)}，请至少提供 8 只股票", "results": [], "filtered_out": dropped}
+
+    days = int(params.get("days", 252))
+    label_horizon = max(1, int(params.get("label_horizon", 5)))
+    rebalance_freq = max(1, int(params.get("rebalance_freq", 1) or 1))
+    benchmark_code = str(params.get("benchmark_code", "510300") or "510300")
+    top_n = max(1, min(int(params.get("top_n", 10) or 10), 50))
+    position_weight_method = (params.get("position_weight_method") or "equal").strip().lower()
+    if position_weight_method not in ("equal", "score_weighted", "kelly"):
+        position_weight_method = "equal"
+
+    try:
+        from tools.stock_data import get_stock_data
+    except ImportError:
+        return {"error": "tools.stock_data 不可用", "results": [], "filtered_out": dropped}
+
+    load_days = max(400, days + 150)
+    data_dict = {}
+    for code in codes:
+        try:
+            raw = get_stock_data(code, load_days, use_cache=True)
+            if raw and len(raw) >= 60:
+                df = pd.DataFrame(raw)
+                if {"date", "close", "high", "low", "volume"}.issubset(df.columns):
+                    data_dict[code] = df.dropna().reset_index(drop=True)
+        except Exception:
+            continue
+    if len(data_dict) < 8:
+        return {"error": f"加载行情不足: {len(data_dict)} 只", "results": [], "filtered_out": dropped}
+
+    dates: List[str] = []
+    for df in data_dict.values():
+        if df is not None and not df.empty and "date" in df.columns:
+            dates.extend(df["date"].astype(str).str[:10].tolist())
+    if not dates:
+        return {"error": "行情日期为空", "results": [], "filtered_out": dropped}
+    start_d = min(dates)
+    end_d = max(dates)
+
+    extra_by_code_date = {}
+    try:
+        from modules.factor_mining.cross_section_data import fetch_pe_turnover_for_codes
+        extra_by_code_date = fetch_pe_turnover_for_codes(list(data_dict.keys()), start_d, end_d)
+    except Exception:
+        pass
+
+    all_base = []
+    for item in filtered:
+        for f in item.get("factor_combo") or []:
+            base = str(f).strip()
+            if base.endswith("_bell"):
+                base = base[:-5]
+            if base:
+                all_base.append(base)
+    all_base = list(dict.fromkeys(all_base))
+
+    factor_df_raw = None
+    try:
+        from db.factor_storage import load_factor_df
+        loaded = load_factor_df(
+            symbols=list(data_dict.keys()),
+            start_date=start_d,
+            end_date=end_d,
+            factor_names=all_base,
+            label_horizon=label_horizon,
+        )
+        if loaded is not None and len(loaded) >= 80 and all(f in loaded.columns for f in all_base):
+            factor_df_raw = loaded
+    except Exception:
+        pass
+    if factor_df_raw is None or factor_df_raw.empty:
+        factor_df_raw = build_training_samples(
+            data_dict=data_dict,
+            days=days,
+            label_horizon=label_horizon,
+            max_window=120,
+            extra_factors_by_code_date=extra_by_code_date if extra_by_code_date else None,
+        )
+    if factor_df_raw is None or factor_df_raw.empty:
+        return {"error": "构建训练样本为空", "results": [], "filtered_out": dropped}
+
+    bell_bases = list(dict.fromkeys([str(f)[:-5] for item in filtered for f in (item.get("factor_combo") or []) if str(f).endswith("_bell")]))
+    factor_df = apply_bell_transforms(factor_df_raw, [b for b in bell_bases if b in factor_df_raw.columns], date_col="date") if bell_bases else factor_df_raw
+    unique_dates = factor_df["date"].drop_duplicates().sort_values()
+    available_days = int(len(unique_dates))
+    if len(unique_dates) > days:
+        last_dates = set(unique_dates.iloc[-int(days):].tolist())
+        factor_df = factor_df[factor_df["date"].isin(last_dates)].copy()
+
+    strategies = []
+    preset_errors: Dict[str, str] = {}
+    for idx, item in enumerate(filtered):
+        combo = [str(x).strip() for x in (item.get("factor_combo") or []) if str(x).strip()]
+        sid = str(idx)
+        missing = [f for f in combo if f not in factor_df.columns]
+        if missing:
+            preset_errors[sid] = f"样本缺少因子列: {missing}"
+            continue
+        wd = item.get("weights") or {}
+        w = np.array([float(wd.get(f, 0.0)) for f in combo], dtype=float)
+        if w.sum() <= 0:
+            w = np.ones(len(combo), dtype=float) / max(1, len(combo))
+        strategies.append({"id": sid, "feature_names": combo, "weights": w})
+
+    multi_out = run_backtest_detailed_multi(
+        factor_df=factor_df,
+        strategies=strategies,
+        top_n=top_n,
+        rebalance_freq=rebalance_freq,
+        position_weight_method=position_weight_method,
+    )
+
+    bench_daily = pd.Series(dtype=float)
+    try:
+        raw_b = get_stock_data(benchmark_code, load_days, use_cache=True)
+        if raw_b and len(raw_b) >= 10:
+            bdf = pd.DataFrame(raw_b)
+            if "date" in bdf.columns and "close" in bdf.columns:
+                bdf = bdf.sort_values("date")
+                bdf["ret"] = bdf["close"].astype(float).pct_change()
+                bench_daily = bdf.set_index("date")["ret"].dropna()
+    except Exception:
+        pass
+
+    def _infer_bucket(base_name: str) -> str:
+        b = str(base_name or "").lower()
+        if b.startswith(("vol", "vroc", "turnover", "volume")) or "volume" in b:
+            return "volume"
+        if b.startswith(("atr", "variance", "kurtosis", "skewness", "sharpe_ratio", "boll")) or "volatility" in b:
+            return "volatility"
+        if b.startswith(("short_reversal", "intraday_amplitude", "rsi", "price_volume_divergence", "high_position_volume")):
+            return "reversal"
+        if b.startswith(("ema", "bias", "roc", "price", "trix", "cci", "momentum")):
+            return "momentum"
+        return "other"
+
+    def _grade(score: float) -> str:
+        if score >= 85:
+            return "A"
+        if score >= 70:
+            return "B"
+        if score >= 55:
+            return "C"
+        return "D"
+
+    def _score_explainability(item: Dict[str, Any]) -> Dict[str, Any]:
+        fp = list(item.get("factor_profile") or [])
+        if not fp:
+            return {
+                "score": 0.0,
+                "grade": "D",
+                "sub_scores": {"direction": 0.0, "weight_effective": 0.0, "redundancy": 0.0, "style_balance": 0.0, "narrative": 0.0},
+                "effective_factor_count": 0,
+                "top_contributor_ratio": 0.0,
+            }
+        abs_ws = [abs(float(x.get("weight", 0.0) or 0.0)) for x in fp]
+        sabs = float(sum(abs_ws))
+        contrib = [(w / sabs) if sabs > 1e-12 else 0.0 for w in abs_ws]
+        top_ratio = float(max(contrib) if contrib else 0.0)
+        eff_cnt = int(sum(1 for c in contrib if c >= 0.10))
+
+        # 方向一致性（25）
+        known_dirs = {"up", "down", "bell", "mixed"}
+        known = sum(1 for x in fp if str(x.get("direction", "unknown")).lower() in known_dirs)
+        direction_score = 25.0 * (known / max(1, len(fp)))
+
+        # 权重有效性（25）
+        if eff_cnt >= 4:
+            w_eff = 24.0
+        elif eff_cnt == 3:
+            w_eff = 22.0
+        elif eff_cnt == 2:
+            w_eff = 18.0
+        elif eff_cnt == 1:
+            w_eff = 10.0
+        else:
+            w_eff = 5.0
+        # 冗余度（20）：同桶占比过高惩罚
+        buckets = {}
+        for x, c in zip(fp, contrib):
+            b = _infer_bucket(x.get("base_name") or x.get("name") or "")
+            buckets[b] = buckets.get(b, 0.0) + c
+        max_bucket = max(buckets.values()) if buckets else 1.0
+        redundancy = 20.0 * max(0.0, 1.0 - max(0.0, max_bucket - 0.55))
+        redundancy = min(20.0, max(6.0, redundancy))
+
+        # 风格覆盖（15）
+        active_buckets = sum(1 for v in buckets.values() if v >= 0.10)
+        if active_buckets >= 3:
+            style_balance = 15.0
+        elif active_buckets == 2:
+            style_balance = 12.0
+        else:
+            style_balance = 7.0
+
+        # 可叙事性（15）
+        bell_cnt = sum(1 for x in fp if bool(x.get("is_bell")))
+        narrative = 10.0 + min(5.0, active_buckets * 2.0) - (2.0 if bell_cnt >= 2 and sum(c for x, c in zip(fp, contrib) if bool(x.get("is_bell"))) < 0.05 else 0.0)
+        narrative = min(15.0, max(5.0, narrative))
+
+        total = float(direction_score + w_eff + redundancy + style_balance + narrative)
+        # 硬规则上限
+        if top_ratio > 0.70:
+            total = min(total, 75.0)
+        if eff_cnt < 2:
+            total = min(total, 65.0)
+        return {
+            "score": round(total, 2),
+            "grade": _grade(total),
+            "sub_scores": {
+                "direction": round(direction_score, 2),
+                "weight_effective": round(w_eff, 2),
+                "redundancy": round(redundancy, 2),
+                "style_balance": round(style_balance, 2),
+                "narrative": round(narrative, 2),
+            },
+            "effective_factor_count": eff_cnt,
+            "top_contributor_ratio": round(top_ratio, 4),
+        }
+
+    def _parse_llm_rank_json(text: str) -> Optional[List[int]]:
+        if not text:
+            return None
+        t = str(text).strip()
+        if "```" in t:
+            for marker in ("```json", "```"):
+                if marker in t:
+                    s = t.find(marker) + len(marker)
+                    e = t.find("```", s)
+                    if e == -1:
+                        e = len(t)
+                    t = t[s:e].strip()
+                    break
+        try:
+            obj = json.loads(t)
+        except Exception:
+            return None
+        arr = obj.get("ranked_indices") if isinstance(obj, dict) else None
+        if not isinstance(arr, list):
+            return None
+        out = []
+        for x in arr:
+            try:
+                out.append(int(x))
+            except Exception:
+                pass
+        return out if out else None
+
+    results = []
+    for idx, item in enumerate(filtered):
+        sid = str(idx)
+        combo = item.get("factor_combo") or []
+        weights_out = {f: float((item.get("weights") or {}).get(f, 0.0)) for f in combo}
+        if sid in preset_errors:
+            results.append({
+                "rank": item.get("rank", idx + 1),
+                "factor_combo": combo,
+                "weights": weights_out,
+                "error": preset_errors[sid],
+                "backtest_stats": None,
+                "alpha": None,
+                "beta": None,
+                "annualized_alpha": None,
+                "r_squared": None,
+                "factor_profile": [],
+            })
+            continue
+        rs = (multi_out.get(sid) or {}).get("returns")
+        rb_details = (multi_out.get(sid) or {}).get("details") or []
+        if rs is None or rs.empty:
+            results.append({
+                "rank": item.get("rank", idx + 1),
+                "factor_combo": combo,
+                "weights": weights_out,
+                "error": "回测收益序列为空",
+                "backtest_stats": None,
+                "alpha": None,
+                "beta": None,
+                "annualized_alpha": None,
+                "r_squared": None,
+                "factor_profile": [],
+            })
+            continue
+        ab = _compute_alpha_beta_robust(rs, bench_daily, label_horizon)
+        ppy = max(1, int(252 / rebalance_freq))
+        stats = backtest_stats(rs, periods_per_year=ppy)
+        fquality = item.get("factor_quality") or {}
+        fprofile = []
+        for f in combo:
+            base = f[:-5] if str(f).endswith("_bell") else f
+            q = fquality.get(f) or fquality.get(base) or {}
+            fprofile.append({
+                "name": f,
+                "base_name": base,
+                "weight": float((item.get("weights") or {}).get(f, 0.0)),
+                "direction": q.get("direction", "unknown"),
+                "is_bell": bool(str(f).endswith("_bell") or q.get("is_bell")),
+                "bell_formula": q.get("bell_formula") or ("(x - 截面均值)^2" if str(f).endswith("_bell") else None),
+            })
+        results.append({
+            "rank": item.get("rank", idx + 1),
+            "factor_combo": combo,
+            "weights": weights_out,
+            "error": None,
+            "backtest_stats": {k: float(v) if hasattr(v, "item") else v for k, v in stats.items()},
+            "alpha": ab.get("alpha"),
+            "beta": ab.get("beta"),
+            "annualized_alpha": ab.get("annualized_alpha"),
+            "r_squared": ab.get("r_squared"),
+            "rebalance_details_count": len(rb_details),
+            "factor_profile": fprofile,
+        })
+
+    # 可解释性评分（规则打分）
+    for r in results:
+        if r.get("error"):
+            r["explainability"] = {
+                "score": 0.0,
+                "grade": "D",
+                "sub_scores": {"direction": 0.0, "weight_effective": 0.0, "redundancy": 0.0, "style_balance": 0.0, "narrative": 0.0},
+                "effective_factor_count": 0,
+                "top_contributor_ratio": 0.0,
+            }
+        else:
+            r["explainability"] = _score_explainability(r)
+        r["mining_rank"] = int(r.get("rank", 0) or 0)
+
+    # 尝试 LLM 对可解释性二次排序（失败则回退规则分）
+    llm_reordered = False
+    llm_reason = ""
+    valid_idx = [i for i, r in enumerate(results) if not r.get("error")]
+    if valid_idx:
+        try:
+            llm = _get_llm()
+            payload = []
+            for i in valid_idx:
+                rr = results[i]
+                ex = rr.get("explainability") or {}
+                payload.append({
+                    "idx": i,
+                    "combo": rr.get("factor_combo") or [],
+                    "profile": rr.get("factor_profile") or [],
+                    "rule_score": ex.get("score", 0.0),
+                    "sub_scores": ex.get("sub_scores") or {},
+                })
+            prompt = (
+                "你是量化策略可解释性评审器。请仅基于方向一致性、权重有效性、冗余度、风格覆盖、叙事清晰度，"
+                "对下列组合给出从高到低排序。输出严格 JSON：{\"ranked_indices\":[...]}，其中索引来自 idx 字段。\n"
+                f"items={json.dumps(payload, ensure_ascii=False)}"
+            )
+            resp = llm.invoke(prompt)
+            text = getattr(resp, "content", None) or str(resp)
+            ranked_idx = _parse_llm_rank_json(text)
+            if ranked_idx:
+                keep = [i for i in ranked_idx if i in valid_idx]
+                rest = [i for i in valid_idx if i not in keep]
+                order = keep + rest
+                ordered_valid = [results[i] for i in order]
+                errs = [r for r in results if r.get("error")]
+                results = ordered_valid + errs
+                llm_reordered = True
+                llm_reason = "llm_rank_applied"
+        except Exception as _e:
+            llm_reason = f"llm_rank_fallback:{_e}"
+
+    if not llm_reordered:
+        results = sorted(
+            results,
+            key=lambda r: (
+                0 if r.get("error") else 1,
+                float((r.get("explainability") or {}).get("score", 0.0)),
+            ),
+            reverse=True,
+        )
+
+    for i, r in enumerate(results, start=1):
+        r["explainability_rank"] = i
+
+    return {
+        "error": None,
+        "requested_days": int(days),
+        "available_days": int(available_days),
+        "actual_days": int(min(days, available_days)),
+        "total_input": len(combo_items),
+        "filtered_count": len(filtered),
+        "filtered_out": dropped,
+        "results": results,
+        "meta": {
+            "calendar_pass": 1,
+            "top_n": int(top_n),
+            "rebalance_freq": int(rebalance_freq),
+            "similarity_threshold": float(sim_th),
+            "used_similarity_threshold": float(used_sim_th),
+            "auto_relax_similarity": bool(auto_relax_similarity),
+            "relax_trace": relax_trace,
+            "llm_reordered": bool(llm_reordered),
+            "llm_reorder_info": llm_reason,
+        },
+    }
+
+
 def _run_orchestrated_search(
     args,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
@@ -1586,7 +2144,7 @@ def _run_orchestrated_search(
     tasks = _get_orchestration_tasks_from_agent(args, universe_size=len(codes))
     if progress_callback:
         progress_callback(0, len(tasks), f"已生成 {len(tasks)} 个编排任务，开始执行…")
-    max_combos = max(1, min(150, int(getattr(args, "max_combos", 15) or 15)))
+    max_combos = max(1, min(200, int(getattr(args, "max_combos", 15) or 15)))
     benchmark_code = getattr(args, "benchmark_code", "510300") or "510300"
     days = int(args.days)
     set_factor_mining_progress(progress_callback=progress_callback, abort_check=abort_check)
@@ -1713,7 +2271,7 @@ def run_search_workflow(
     set_factor_mining_progress(progress_callback=progress_callback, abort_check=abort_check)
     if progress_callback:
         progress_callback(0, 1, "workflow: 启动因子挖掘")
-    max_combos = max(1, min(150, int(getattr(args, "max_combos", 15) or 15)))
+    max_combos = max(1, min(200, int(getattr(args, "max_combos", 15) or 15)))
     initial = {
         "universe_codes": codes,
         "days": int(args.days),
@@ -1722,6 +2280,7 @@ def run_search_workflow(
         "max_combos": max_combos,
         "mode": mode,
         "benchmark_code": getattr(args, "benchmark_code", "510300") or "510300",
+        "force_refresh_data": bool(getattr(args, "force_refresh_data", True)),
     }
     try:
         final = factor_mining_graph.invoke(initial)
@@ -1833,6 +2392,7 @@ def run_search_from_params(
         benchmark_code=str(params.get("benchmark_code", "510300") or "510300"),
         orchestrate_user_preference=str(params.get("orchestrate_user_preference", "") or "").strip(),
         n_trials=params.get("n_trials"),
+        force_refresh_data=bool(params.get("force_refresh_data", True)),
     )
     orchestrate_tasks = bool(params.get("orchestrate_tasks", True))
     if orchestrate_tasks:

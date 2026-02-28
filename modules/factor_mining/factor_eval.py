@@ -473,6 +473,110 @@ def run_backtest_detailed(
     return pd.Series({d: r for d, r in returns_list}).sort_index(), details
 
 
+def run_backtest_detailed_multi(
+    factor_df: pd.DataFrame,
+    strategies: List[Dict[str, Any]],
+    top_n: int = 10,
+    rebalance_freq: int = 1,
+    position_weight_method: str = "equal",
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    多策略批量回测：仅遍历一遍日期日历，同时计算多组因子组合。
+    strategies: [{"id": "...", "feature_names": [...], "weights": np.ndarray}, ...]
+    返回: {id: {"returns": pd.Series, "details": [...]}}
+    """
+    out: Dict[str, Dict[str, Any]] = {}
+    if factor_df is None or factor_df.empty or not strategies:
+        return out
+
+    weight_method = (position_weight_method or "equal").strip().lower()
+    if weight_method not in ("equal", "score_weighted", "kelly"):
+        weight_method = "equal"
+    has_code = "stock_code" in factor_df.columns
+    freq = max(1, int(rebalance_freq))
+    dates_sorted = factor_df["date"].drop_duplicates().sort_values().tolist()
+    if not dates_sorted:
+        return out
+    rebalance_dates = set(dates_sorted[i] for i in range(0, len(dates_sorted), freq))
+    total_dates = len(rebalance_dates)
+
+    valid_strategies: List[Dict[str, Any]] = []
+    all_cols: set[str] = set()
+    for s in strategies:
+        sid = str(s.get("id") or "").strip()
+        fns = list(s.get("feature_names") or [])
+        w = s.get("weights")
+        if not sid or not fns or w is None or len(fns) != len(w):
+            continue
+        out[sid] = {"returns": pd.Series(dtype=float), "details": []}
+        valid_strategies.append({"id": sid, "feature_names": fns, "weights": np.asarray(w, dtype=float)})
+        all_cols.update(fns)
+    if not valid_strategies:
+        return out
+
+    returns_map: Dict[str, List[tuple]] = {s["id"]: [] for s in valid_strategies}
+    details_map: Dict[str, List[Dict[str, Any]]] = {s["id"]: [] for s in valid_strategies}
+
+    done = 0
+    for date, grp in factor_df.groupby("date"):
+        if date not in rebalance_dates:
+            continue
+        g = grp.copy()
+        # 同一日期上，公共因子列标准化仅做一次
+        for col in all_cols:
+            if col not in g.columns:
+                continue
+            mean = g[col].mean()
+            std_val = g[col].std()
+            std_scalar = float(std_val) if np.isscalar(std_val) or getattr(std_val, "ndim", -1) == 0 else 0.0
+            if std_scalar > 1e-12:
+                g[col] = (g[col] - mean) / std_scalar
+            else:
+                g[col] = 0.0
+
+        for s in valid_strategies:
+            sid = s["id"]
+            fns = s["feature_names"]
+            missing = [c for c in fns if c not in g.columns]
+            if missing:
+                continue
+            scores = g[fns].values @ s["weights"]
+            tmp = g.copy()
+            tmp["_score"] = scores
+            top = tmp.nlargest(min(top_n, len(tmp)), "_score")
+            if "y" not in top.columns or len(top) == 0:
+                continue
+            period_return = _period_return_by_weight_method(top, weight_method)
+            returns_map[sid].append((date, period_return))
+            stocks = top["stock_code"].tolist() if has_code else []
+            scores_raw = top["_score"].round(4).tolist()
+            y_vals = top["y"].round(6).tolist()
+            details_map[sid].append({
+                "date": str(date),
+                "stocks": stocks,
+                "scores": dict(zip(stocks, scores_raw)) if stocks else {},
+                "period_return": round(period_return, 6),
+                "stock_returns": dict(zip(stocks, y_vals)) if stocks else {},
+            })
+
+        done += 1
+        if progress_callback and total_dates > 0:
+            progress_callback(done, total_dates, f"批量回测 {done}/{total_dates} 日")
+
+    for s in valid_strategies:
+        sid = s["id"]
+        rs = returns_map.get(sid) or []
+        if rs:
+            out[sid] = {
+                "returns": pd.Series({d: r for d, r in rs}).sort_index(),
+                "details": details_map.get(sid) or [],
+            }
+        else:
+            out[sid] = {"returns": pd.Series(dtype=float), "details": []}
+    return out
+
+
 def generate_backtest_chart(
     strat_returns: pd.Series,
     bench_daily: Optional[pd.Series] = None,
